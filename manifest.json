@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "SpeedFlow",
+  "version": "2.1.0",
+  "description": "Premium YouTube playback speed controller. Injects a native-feeling speed widget directly into the YouTube player.",
+
+  "permissions": [
+    "scripting",
+    "tabs"
+  ],
+
+  "host_permissions": [
+    "*://www.youtube.com/*"
+  ],
+
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none';"
+  },
+
+  "action": {
+    "default_title": "SpeedFlow",
+    "default_popup": "popup.html"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["*://www.youtube.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    }
+  ]
+}
