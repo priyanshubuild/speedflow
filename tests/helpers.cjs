@@ -4,7 +4,7 @@ const path = require('node:path');
 const ROOT = path.resolve(__dirname, '..');
 const read = file => fs.readFileSync(path.join(ROOT, file), 'utf8');
 const tick = (ms = 45) => new Promise(resolve => setTimeout(resolve, ms));
-const playerHTML = `<div id="movie_player" class="html5-video-player"><video class="html5-main-video" src="https://example.test/video.mp4"></video><div class="ytp-chrome-bottom"><div class="ytp-chrome-controls"><div class="ytp-left-controls"><button class="ytp-button ytp-play-button">Play</button></div><div class="ytp-right-controls"><div class="ytp-right-controls-left"><button class="ytp-button ytp-settings-button" aria-expanded="false">Settings</button></div><div class="ytp-right-controls-right"><button class="ytp-button">Fullscreen</button></div></div></div></div></div>`;
+const playerHTML = `<div id="movie_player" class="html5-video-player"><video class="html5-main-video" src="https://example.test/video.mp4"></video><div class="ytp-chrome-bottom"><div class="ytp-chrome-controls"><div class="ytp-left-controls"><button class="ytp-button ytp-play-button">Play</button><span class="ytp-time-current" style="font-size:12px;font-weight:400">0:00</span></div><div class="ytp-right-controls"><div class="ytp-right-controls-left"><button class="ytp-button ytp-settings-button" aria-expanded="false">Settings</button></div><div class="ytp-right-controls-right"><button class="ytp-button">Fullscreen</button></div></div></div></div></div>`;
 function storageMock(initial = {}, reject = false) {
   const values = { ...initial }, listeners = [], writes = [];
   return {
@@ -25,7 +25,7 @@ function storageMock(initial = {}, reject = false) {
   };
 }
 async function contentFixture(options = {}) {
-  const dom = new JSDOM(`<html><body>${options.html ?? playerHTML}<input id="search"><div id="editor" contenteditable="true"><span>text</span></div></body></html>`, {
+  const dom = new JSDOM(`<html><body>${options.html ?? playerHTML}<input id="search"><input id="range" type="range"><div id="editor" contenteditable="true"><span>text</span></div></body></html>`, {
     url: options.url || 'https://www.youtube.com/watch?v=test', runScripts: 'outside-only', pretendToBeVisual: true,
   });
   const w = dom.window, messages = [];
@@ -43,7 +43,6 @@ async function contentFixture(options = {}) {
     query: selector => w.document.querySelector(selector),
     click: selector => w.document.querySelector(selector).click(),
     key: (key, target = w.document.body, extra = {}) => target.dispatchEvent(new w.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...extra })),
-    message(message, sender = { id: extension.runtime.id }) { let response; messages[0](message, sender, value => { response = value; }); return response; },
     close: () => { w.dispatchEvent(new w.PageTransitionEvent('pagehide')); w.close(); },
   };
 }

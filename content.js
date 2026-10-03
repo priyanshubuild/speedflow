@@ -6,7 +6,6 @@
   const C = globalThis.SpeedFlowCore;
   const extension = globalThis.browser || globalThis.chrome;
   const controllers = new Map();
-  const originalRates = new WeakMap();
   let prefs = { ...C.DEFAULTS }, speed = 1, initialized = false;
   let scheduled = 0, saveTimer = 0, storageNotice = false, activeController = null;
   const lifetime = new AbortController();
@@ -41,8 +40,7 @@
   }
   function persistSpeed() {
     clearTimeout(saveTimer);
-    if (!prefs.sfRemember) return;
-    // Coalesce slider/held-key changes rather than writing on every event.
+    // Coalesce held-key changes rather than writing on every event.
     saveTimer = setTimeout(() => {
       saveTimer = 0;
       prefs.sfSpeed = speed;
@@ -54,7 +52,6 @@
   }
   function changeSpeed(next, source, report = true) {
     if (!C.validSpeed(next)) return { ok: false, error: 'Choose a speed from 0.25× to 10×.' };
-    if (!prefs.sfEnabled) return { ok: false, error: 'Enable SpeedFlow first.' };
     if (source?.adPlaying()) {
       announce('Speed controls are paused during ads. Your speed will resume afterward.');
       return { ok: false, error: 'Speed controls are paused during ads.' };
@@ -70,75 +67,35 @@
       return { ok: false, error: 'This browser or video rejected that playback speed.' };
     }
     persistSpeed();
-    for (const controller of controllers.values()) controller.update();
+    for (const controller of controllers.values()) { controller.error = ''; controller.update(); }
     if (report) announce(`Playback speed ${C.format(speed)}.`);
     return { ok: true, speed };
   }
 
   class PlayerController {
     constructor(player, controls, target) {
-      Object.assign(this, { player, controls, target, video: null, expectedRate: null, originalRate: 1, mediaSource: '', wasAd: false });
+      Object.assign(this, { player, controls, target, video: null, expectedRate: null, mediaSource: '', wasAd: false });
       this.wasAd = this.adPlaying();
       this.abort = new AbortController();
       this.signal = this.abort.signal;
       this.root = element('div', 'sf-controls');
       this.root.setAttribute('role', 'group');
       this.root.setAttribute('aria-label', 'Playback speed');
+      this.reset = button('ytp-button sf-control sf-reset', 'Reset playback speed to 1× (\\)');
+      this.reset.append(element('span', 'sf-reset-label', '1×'));
       this.minus = button('ytp-button sf-control sf-step', 'Decrease playback speed ([)');
-      this.minus.append(icon('M5 11h14v2H5z'));
-      this.trigger = button('ytp-button sf-control sf-trigger', 'Playback speed: 1×. Open speed options.');
-      this.readout = element('span', 'sf-readout', '1×');
-      this.trigger.append(this.readout);
+      this.minus.append(icon('M6 10h12c1.1 0 2 .9 2 2s-.9 2-2 2H6c-1.1 0-2-.9-2-2s.9-2 2-2z'));
+      this.readout = element('span', 'sf-readout', C.format(speed));
+      this.readout.setAttribute('aria-label', 'Current playback speed');
       this.plus = button('ytp-button sf-control sf-step', 'Increase playback speed (])');
-      this.plus.append(icon('M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z'));
-      this.root.append(this.minus, this.trigger, this.plus);
+      this.plus.append(icon('M6 10h12c1.1 0 2 .9 2 2s-.9 2-2 2H6c-1.1 0-2-.9-2-2s.9-2 2-2z M10 6c0-1.1.9-2 2-2s2 .9 2 2v12c0 1.1-.9 2-2 2s-2-.9-2-2V6z'));
+      this.root.append(this.reset, this.minus, this.readout, this.plus);
       target.insertBefore(this.root, target.firstChild);
-      this.panel = element('section', 'sf-panel');
-      this.panel.id = `sf-panel-${PlayerController.nextID++}`;
-      this.panel.hidden = true;
-      this.panel.setAttribute('role', 'dialog');
-      this.panel.setAttribute('aria-label', 'Playback speed options');
-      this.trigger.setAttribute('aria-haspopup', 'dialog');
-      this.trigger.setAttribute('aria-controls', this.panel.id);
-      this.trigger.setAttribute('aria-expanded', 'false');
-      this.trigger.setAttribute('aria-keyshortcuts', 'ArrowDown');
-      const heading = element('div', 'sf-heading');
-      heading.append(element('h2', 'sf-title', 'Playback speed'));
-      this.closeButton = button('sf-option sf-close', 'Close speed options', '×');
-      heading.append(this.closeButton);
-      this.panel.append(heading);
-      const presets = element('div', 'sf-presets');
-      presets.setAttribute('role', 'group');
-      presets.setAttribute('aria-label', 'Speed presets');
-      this.presetButtons = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 3].map(value => {
-        const node = button('sf-option sf-preset', `Set playback speed to ${C.format(value)}`, C.format(value));
-        node.dataset.speed = String(value);
-        node.setAttribute('aria-pressed', 'false');
-        node.addEventListener('click', () => changeSpeed(value, this), { signal: this.signal });
-        presets.append(node);
-        return node;
-      });
-      this.panel.append(presets);
-      const rangeRow = element('div', 'sf-range-row');
-      const label = element('label', 'sf-range-label', 'Fine tune');
-      this.slider = element('input', 'sf-slider');
-      Object.assign(this.slider, { type: 'range', id: `${this.panel.id}-range`, min: String(C.MIN), max: String(C.MAX), step: String(C.STEP) });
-      label.htmlFor = this.slider.id;
-      this.output = element('span', 'sf-range-value', '1×');
-      rangeRow.append(label, this.output);
-      this.panel.append(rangeRow, this.slider);
-      const endpoints = element('div', 'sf-endpoints');
-      endpoints.setAttribute('aria-hidden', 'true');
-      endpoints.append(element('span', '', '0.25×'), element('span', '', '10×'));
-      this.reset = button('sf-option sf-reset', 'Reset playback speed to normal (\\)', 'Reset to normal');
-      this.hint = element('p', 'sf-hint', '[ slower · ] faster · \\ reset');
-      this.note = element('p', 'sf-note');
-      this.panel.append(endpoints, this.reset, this.hint, this.note);
       this.status = element('span', 'sf-sr-only');
       this.status.setAttribute('role', 'status');
       this.status.setAttribute('aria-live', 'polite');
       this.status.setAttribute('aria-atomic', 'true');
-      player.append(this.panel, this.status);
+      player.append(this.status);
 
       this.minus.addEventListener('click', () => {
         if (this.minus.getAttribute('aria-disabled') !== 'true') changeSpeed(C.clamp(speed - C.STEP), this);
@@ -146,38 +103,22 @@
       this.plus.addEventListener('click', () => {
         if (this.plus.getAttribute('aria-disabled') !== 'true') changeSpeed(C.clamp(speed + C.STEP), this);
       }, { signal: this.signal });
-      this.trigger.addEventListener('click', () => this.panel.hidden ? this.open() : this.close(true), { signal: this.signal });
-      this.trigger.addEventListener('keydown', event => {
-        if (event.key === 'ArrowDown') { event.preventDefault(); event.stopPropagation(); this.open(); }
-      }, { signal: this.signal });
-      this.closeButton.addEventListener('click', () => this.close(true), { signal: this.signal });
-      this.reset.addEventListener('click', () => changeSpeed(1, this), { signal: this.signal });
-      this.slider.addEventListener('input', () => changeSpeed(Number(this.slider.value), this), { signal: this.signal });
-      for (const node of [this.root, this.panel]) {
-        for (const name of ['click', 'dblclick', 'pointerdown', 'mousedown', 'touchstart']) {
-          node.addEventListener(name, event => { activeController = this; event.stopPropagation(); }, { signal: this.signal });
+      this.reset.addEventListener('click', () => {
+        if (this.reset.getAttribute('aria-disabled') !== 'true') {
+          changeSpeed(1, this);
         }
-        node.addEventListener('keydown', event => {
-          if (event.key === 'Escape' && !this.panel.hidden) { event.preventDefault(); this.close(true); }
-          // Preserve Tab navigation; prevent Enter/Space/range keys reaching the player.
-          const isolate = node === this.panel || ['Enter', ' ', 'Escape', 'ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key);
-          if (isolate && !['[', ']', '\\', 'Tab'].includes(event.key)) event.stopPropagation();
-        }, { signal: this.signal });
-        node.addEventListener('keyup', event => {
-          if (node === this.panel || ['Enter', ' ', 'Escape', 'ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) event.stopPropagation();
+      }, { signal: this.signal });
+      for (const name of ['click', 'dblclick', 'pointerdown', 'mousedown', 'touchstart']) {
+        this.root.addEventListener(name, event => { activeController = this; event.stopPropagation(); }, { signal: this.signal });
+      }
+      for (const name of ['keydown', 'keyup']) {
+        this.root.addEventListener(name, event => {
+          // Let YouTube hotkeys and Tab work; prevent button activation from toggling playback.
+          if (['Enter', ' '].includes(event.key)) event.stopPropagation();
         }, { signal: this.signal });
       }
-      this.panel.addEventListener('focusout', () => queueMicrotask(() => {
-        if (!this.panel.contains(document.activeElement) && document.activeElement !== this.trigger) this.close(false);
-      }), { signal: this.signal });
-      document.addEventListener('pointerdown', event => {
-        if (!this.panel.hidden && !this.panel.contains(event.target) && !this.root.contains(event.target)) this.close(false);
-      }, { capture: true, signal: this.signal });
       player.addEventListener('focusin', () => { activeController = this; }, { signal: this.signal });
       player.addEventListener('pointerenter', () => { activeController = this; }, { signal: this.signal });
-      player.addEventListener('click', event => {
-        if (event.target.closest?.('.ytp-settings-button')) this.close(false);
-      }, { signal: this.signal });
       this.attributes = new MutationObserver(() => {
         const ad = this.adPlaying();
         if (this.wasAd && !ad) this.apply();
@@ -203,15 +144,13 @@
       this.video = video;
       this.expectedRate = null;
       if (!video) { this.update(); return; }
-      if (!originalRates.has(video)) originalRates.set(video, C.validSpeed(video.playbackRate) ? video.playbackRate : 1);
-      this.originalRate = originalRates.get(video);
       this.mediaSource = video.currentSrc || video.src;
       this.mediaAbort = new AbortController();
       const signal = this.mediaAbort.signal;
       const reapply = () => { this.mediaSource = video.currentSrc || video.src; this.apply(); this.update(); };
       for (const name of ['loadedmetadata', 'loadeddata', 'canplay', 'play']) video.addEventListener(name, reapply, { signal });
       video.addEventListener('ratechange', () => {
-        if (this.adPlaying() || !prefs.sfEnabled || !this.video) return;
+        if (this.adPlaying() || !this.video) return;
         if (this.expectedRate !== null && Math.abs(video.playbackRate - this.expectedRate) < 0.001) {
           this.expectedRate = null;
           return;
@@ -220,8 +159,6 @@
         if (this.mediaSource !== (video.currentSrc || video.src)) return;
         // Accept native speed changes rather than fighting YouTube's Settings menu.
         if (C.validSpeed(video.playbackRate) && Math.abs(video.playbackRate - speed) > 0.001) {
-          this.originalRate = video.playbackRate;
-          originalRates.set(video, video.playbackRate);
           changeSpeed(video.playbackRate, this);
         }
       }, { signal });
@@ -232,7 +169,7 @@
       }
     }
     apply() {
-      if (!this.video || this.adPlaying() || !prefs.sfEnabled) return true;
+      if (!this.video || this.adPlaying()) return true;
       const video = this.video;
       if (Math.abs(video.playbackRate - speed) < 0.001) return true;
       try {
@@ -242,34 +179,23 @@
         return true;
       } catch { this.expectedRate = null; return false; }
     }
-    notify(message, visible) {
-      clearTimeout(this.noticeTimer);
+    notify(message, error) {
       this.status.textContent = message;
-      this.status.classList.toggle('sf-toast', visible);
-      if (visible) this.noticeTimer = setTimeout(() => this.status.classList.remove('sf-toast'), 4000);
+      // Errors use the existing controls' native tooltip, never an extra overlay.
+      if (error) { this.error = message; this.root.title = message; }
     }
     update() {
-      const value = C.format(speed), ad = this.adPlaying(), unavailable = ad || !this.video;
+      const value = C.format(speed), unavailable = this.adPlaying() || !this.video;
       this.readout.textContent = value;
-      this.trigger.setAttribute('aria-label', `Playback speed: ${value}. Open speed options.`);
-      this.trigger.title = `Playback speed ${value} · Click for options`;
+      this.readout.setAttribute('aria-label', `Current playback speed: ${value}`);
+      this.readout.title = `Playback speed ${value}`;
       this.minus.setAttribute('aria-disabled', String(unavailable || speed <= C.MIN));
       this.plus.setAttribute('aria-disabled', String(unavailable || speed >= C.MAX));
-      this.slider.disabled = unavailable;
-      this.slider.value = String(speed);
-      this.slider.setAttribute('aria-valuetext', `${value} playback speed`);
-      this.output.textContent = value;
-      for (const node of this.presetButtons) {
-        node.setAttribute('aria-pressed', String(Number(node.dataset.speed) === speed));
-        node.disabled = unavailable;
-      }
-      this.reset.disabled = unavailable;
-      this.root.classList.toggle('sf-unavailable', unavailable);
-      this.hint.hidden = !prefs.sfShortcuts;
-      this.note.textContent = ad ? 'Paused during ads. Your speed resumes afterward.' :
-        'At high speeds, some browsers may mute audio.';
-      this.note.hidden = !ad && speed <= 4;
-      if (!this.panel.hidden) this.layout();
+      this.reset.setAttribute('aria-disabled', String(unavailable));
+      if (speed === 1 && document.activeElement === this.reset) this.minus.focus({ preventScroll: true });
+      this.reset.hidden = speed === 1;
+      this.root.title = unavailable ? 'Speed controls pause during ads or while the video is unavailable.' : (this.error || '');
+      this.layout();
     }
     layout() {
       const reference = this.target.querySelector('.ytp-settings-button') || this.target.querySelector('.ytp-button:not(.sf-control)');
@@ -279,7 +205,12 @@
         this.root.style.setProperty('--sf-control-height', `${Math.max(32, Math.min(56, height || 40))}px`);
         this.root.style.fontFamily = css.fontFamily;
         this.root.style.color = css.color;
-        this.panel.style.fontFamily = css.fontFamily;
+        const time = this.controls.querySelector('.ytp-time-current, .ytp-time-display');
+        if (time) {
+          const text = getComputedStyle(time);
+          this.root.style.setProperty('--sf-text-size', `${Math.max(12, Math.min(14, parseFloat(text.fontSize) || 13))}px`);
+          this.root.style.setProperty('--sf-text-weight', text.fontWeight);
+        }
       }
       this.root.classList.toggle('sf-compact', rect.width < 640);
       const left = this.controls.querySelector('.ytp-left-controls');
@@ -290,61 +221,29 @@
         const nativeWidth = nativeGroups.reduce((total, node) => total + node.getBoundingClientRect().width, 0);
         const needed = nativeWidth + this.root.getBoundingClientRect().width + gap * nativeGroups.length;
         const available = this.controls.clientWidth - left.getBoundingClientRect().width - controlGap;
-        // Keep all three speed controls in front, even when native buttons fill the row.
+        // Keep the speed controls in front, even when native buttons fill the row.
         this.root.classList.toggle('sf-overflow', rect.width > 0 && rect.width < 700 && this.controls.clientWidth > 0 && needed > available);
       }
-      if (this.panel.hidden) return;
-      const trigger = this.trigger.getBoundingClientRect();
-      const width = Math.min(280, Math.max(180, rect.width - 16));
-      this.panel.style.width = `${width}px`;
-      this.panel.style.right = `${Math.max(8, Math.min(rect.width - width - 8, rect.right - trigger.right))}px`;
-      const bottom = Math.max(48, rect.bottom - trigger.top + 8);
-      this.panel.style.bottom = `${bottom}px`;
-      this.panel.style.maxHeight = `${Math.max(100, rect.height - bottom - 8)}px`;
     }
-    open() {
-      for (const controller of controllers.values()) if (controller !== this) controller.close(false);
-      activeController = this;
-      // Use the real native button instead of undocumented player methods.
-      this.controls.querySelector('.ytp-settings-button[aria-expanded="true"]')?.click();
-      this.panel.hidden = false;
-      this.trigger.setAttribute('aria-expanded', 'true');
-      this.player.classList.add('sf-options-open');
-      this.layout();
-      (this.presetButtons.find(node => node.getAttribute('aria-pressed') === 'true' && !node.disabled) || this.closeButton).focus({ preventScroll: true });
-    }
-    close(restoreFocus) {
-      this.panel.hidden = true;
-      this.trigger.setAttribute('aria-expanded', 'false');
-      this.player.classList.remove('sf-options-open');
-      if (restoreFocus && this.trigger.isConnected) this.trigger.focus({ preventScroll: true });
-    }
-    destroy(restoreRate = false) {
-      this.close(false);
+    destroy() {
       this.abort.abort();
       this.mediaAbort?.abort();
       this.attributes.disconnect();
       this.resize?.disconnect();
-      clearTimeout(this.noticeTimer);
-      if (restoreRate && this.video && !this.adPlaying()) {
-        try { this.video.playbackRate = this.originalRate; } catch { /* The media may reject a write. */ }
-      }
-      if (restoreRate && this.video) originalRates.delete(this.video);
-      this.root.remove(); this.panel.remove(); this.status.remove();
+      this.root.remove(); this.status.remove();
       if (activeController === this) activeController = null;
     }
   }
-  PlayerController.nextID = 1;
 
   function reconcile() {
     scheduled = 0;
     if (!initialized) return;
-    const allowed = prefs.sfEnabled && supportedRoute();
+    const allowed = supportedRoute();
     for (const [player, controller] of controllers) {
       const controls = player.querySelector('.ytp-chrome-controls');
       const target = controls?.querySelector('.ytp-right-controls') || controls;
-      if (!allowed || !player.isConnected || controls !== controller.controls || target !== controller.target || controller.root.parentElement !== target || !controller.panel.isConnected) {
-        controller.destroy(!prefs.sfEnabled);
+      if (!allowed || !player.isConnected || controls !== controller.controls || target !== controller.target || controller.root.parentElement !== target || !controller.status.isConnected) {
+        controller.destroy();
         controllers.delete(player);
       } else controller.bindVideo();
     }
@@ -357,9 +256,9 @@
     }
   }
   function schedule() { if (!scheduled) scheduled = requestAnimationFrame(reconcile); }
-  const relevant = '.html5-video-player, .ytp-chrome-controls, .ytp-right-controls, video, .sf-controls, .sf-panel';
+  const relevant = '.html5-video-player, .ytp-chrome-controls, .ytp-right-controls, video, .sf-controls, .sf-sr-only';
   const observer = new MutationObserver(records => {
-    if (!initialized || !prefs.sfEnabled) return;
+    if (!initialized) return;
     if (records.some(record => [...record.addedNodes, ...record.removedNodes].some(node =>
       node.nodeType === 1 && (node.matches(relevant) || node.querySelector(relevant))))) schedule();
   });
@@ -369,7 +268,7 @@
     observer.disconnect();
     lifetime.abort();
     cancelAnimationFrame(scheduled);
-    if (saveTimer && prefs.sfRemember) {
+    if (saveTimer) {
       extension.storage.local.set({ sfSpeed: speed }).catch(() => {});
     }
     clearTimeout(saveTimer);
@@ -379,7 +278,6 @@
   for (const event of ['yt-navigate-finish', 'yt-page-data-updated', 'popstate', 'pageshow']) window.addEventListener(event, schedule, { signal: lifetime.signal });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) schedule(); }, { signal: lifetime.signal });
   window.addEventListener('keydown', event => {
-    if (!prefs.sfEnabled || !prefs.sfShortcuts) return;
     const action = C.shortcut(event);
     if (!action) return;
     const controller = activeController?.player.isConnected ? activeController : [...controllers.values()].find(item => item.player.getBoundingClientRect().width > 0);
@@ -387,34 +285,22 @@
     event.preventDefault(); event.stopPropagation();
     changeSpeed(action === 'reset' ? 1 : C.clamp(speed + (action === 'increase' ? C.STEP : -C.STEP)), controller);
   }, { signal: lifetime.signal });
-  extension.runtime.onMessage.addListener((message, sender, respond) => {
-    if (sender.id !== extension.runtime.id || !message || !['sf:state', 'sf:set-speed'].includes(message.type)) return false;
-    if (!initialized) { respond({ ok: false, loading: true, error: 'SpeedFlow is loading. Try again in a moment.' }); return false; }
-    if (message.type === 'sf:set-speed') {
-      const controller = activeController || controllers.values().next().value;
-      respond(controller ? changeSpeed(message.speed, controller) : { ok: false, error: 'Open a regular YouTube video first.' });
-    } else respond({ ok: true, speed, enabled: prefs.sfEnabled, mounted: controllers.size > 0, ad: [...controllers.values()].some(controller => controller.adPlaying()) });
-    return false;
-  });
   extension.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local' || !Object.keys(C.DEFAULTS).some(key => key in changes)) return;
     const updated = { ...prefs };
     for (const key of Object.keys(C.DEFAULTS)) if (key in changes) updated[key] = changes[key].newValue;
-    const previous = prefs;
     prefs = C.preferences(updated);
-    if (!prefs.sfRemember) clearTimeout(saveTimer);
-    const nextSpeed = prefs.sfRemember && 'sfSpeed' in changes ? prefs.sfSpeed : speed;
-    if (!previous.sfRemember && prefs.sfRemember) persistSpeed();
+    const nextSpeed = prefs.sfSpeed;
     reconcile();
-    if (prefs.sfEnabled && nextSpeed !== speed) {
+    if (nextSpeed !== speed) {
       const result = changeSpeed(nextSpeed, null, false);
       if (!result.ok) persistSpeed();
-    } else if (!prefs.sfEnabled) speed = nextSpeed;
+    }
     for (const controller of controllers.values()) { controller.apply(); controller.update(); }
   });
   extension.storage.local.get(Object.keys(C.DEFAULTS)).then(raw => {
     prefs = C.preferences(raw);
-    speed = prefs.sfRemember ? prefs.sfSpeed : 1;
+    speed = prefs.sfSpeed;
   }).catch(() => { storageNotice = true; }).finally(() => {
     initialized = true;
     reconcile();

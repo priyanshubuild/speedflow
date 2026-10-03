@@ -1,6 +1,6 @@
 /* Test fixture only. Never included in extension packages. */
 (() => {
-  const handlers = [], values = { sfSpeed: 1, sfEnabled: true, sfRemember: true, sfShortcuts: true };
+  const handlers = [], values = { sfSpeed: 1 };
   window.browser = {
     runtime: { id: 'speedflow-preview', onMessage: { addListener() {} } },
     storage: {

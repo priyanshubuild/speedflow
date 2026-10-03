@@ -5,7 +5,7 @@ from pathlib import Path
 import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
-FILES = ('core.js', 'content.js', 'content.css', 'popup.html', 'popup.js', 'popup.css')
+FILES = ('core.js', 'content.js', 'content.css')
 BROWSERS = ('chromium', 'firefox', 'safari')
 
 def package(browser, output):
@@ -19,11 +19,14 @@ def package(browser, output):
     output.mkdir(parents=True, exist_ok=True)
     folder = output / f'speedflow-{browser}'
     folder.mkdir(exist_ok=True)
+    # Remove UI assets retired in 3.1 from previous generated unpacked packages.
+    for retired in ('popup.html', 'popup.js', 'popup.css', 'docs/player-preview.jpg'):
+        (folder / retired).unlink(missing_ok=True)
     assets = {name: (ROOT / name).read_bytes() for name in FILES}
     assets.update({str(path.relative_to(ROOT)): path.read_bytes() for path in sorted((ROOT / 'icons').glob('*.png'))})
     assets['manifest.json'] = (json.dumps(manifest, indent=2) + '\n').encode()
     assets['README.md'] = (ROOT / 'README.md').read_bytes()
-    for name in ('docs/player-preview.jpg', 'docs/VALIDATION.md'):
+    for name in ('docs/front-controls.jpg', 'docs/VALIDATION.md'):
         assets[name] = (ROOT / name).read_bytes()
     archive = output / f'speedflow-{browser}-{manifest["version"]}.zip'
     with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED) as bundle:

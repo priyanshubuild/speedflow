@@ -1,25 +1,15 @@
 {
   "manifest_version": 3,
   "name": "SpeedFlow",
-  "version": "3.0.0",
-  "description": "YouTube speed controls, right where you watch. Accessible buttons, presets, and shortcuts with locally saved preferences.",
+  "version": "3.1.0",
+  "description": "Simple YouTube speed controls: reset, slower, speed, faster. Native styling, keyboard shortcuts, and locally remembered speed.",
   "permissions": [
-    "storage",
-    "scripting"
+    "storage"
   ],
   "host_permissions": [
     "https://www.youtube.com/*",
     "https://www.youtube-nocookie.com/embed/*"
   ],
-  "action": {
-    "default_title": "SpeedFlow \u2014 YouTube playback speed",
-    "default_popup": "popup.html",
-    "default_icon": {
-      "16": "icons/icon-16.png",
-      "32": "icons/icon-32.png",
-      "48": "icons/icon-48.png"
-    }
-  },
   "content_scripts": [
     {
       "matches": [
