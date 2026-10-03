@@ -85,3 +85,32 @@ Pinning gives you quick access to the toolbar button. The playback controls appe
 5. Click **+** once. The readout should change to **1.25×** and playback should speed up.
 
 These installation steps follow [Chrome's official guide to loading unpacked extensions](https://developer.chrome.com/docs/extensions/get-started/tutorial/hello-world#load-unpacked).
+
+## How to use SpeedFlow
+
+### Player controls
+
+| Control | What it does |
+| --- | --- |
+| **−** | Decreases speed by 0.25×, down to 0.25×. |
+| **Speed readout** | Shows the selected speed, such as 1.0× or 1.75×. |
+| **+** | Increases speed by 0.25×, up to 10×. |
+| **1×** | Restores normal speed. This button appears when the speed is different from 1×. |
+
+For example, click **+** four times from 1.0× to reach 2.0×. Click **1×** to return to normal playback.
+
+SpeedFlow remembers the last selected speed in YouTube's local storage in that Chrome profile. Clearing YouTube site data clears the saved preference. The controls follow YouTube's player control bar, so move your mouse over the video if they are hidden.
+
+### Keyboard shortcuts
+
+| Key | Action |
+| --- | --- |
+| `]` | Increase speed by 0.25×. |
+| `[` | Decrease speed by 0.25×. |
+| `\` (backslash) | Reset to 1×. |
+
+Keep the YouTube page focused when using these shortcuts. They are ignored while you type in a search box, comment field, or other editable area. The shortcuts refer to the characters shown; their key positions depend on your keyboard layout.
+
+### Toolbar button
+
+Clicking the SpeedFlow toolbar icon attempts to activate the script on the current tab, then closes its tiny popup immediately. A large popup or separate settings window is not expected. Use the toolbar button while a YouTube tab is active; the main interface lives in the video player.
