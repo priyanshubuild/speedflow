@@ -50,6 +50,8 @@ Chrome is the primary target. Other browsers still need installed-extension test
 
 **Disable or remove:** Use the browser's extensions page, then refresh YouTube.
 
+**After reloading the extension:** Refresh every open YouTube tab to replace its old extension code.
+
 **Missing controls?** Check that SpeedFlow is enabled and allowed on YouTube, refresh the page, and open a regular video. If playback struggles at high speed, lower the rate.
 
 ## Privacy
@@ -65,6 +67,6 @@ npm test
 python3 scripts/package.py
 ```
 
-24 automated tests cover speed changes, reset, keyboard use, ads, navigation, and player replacement. Browser packages are created in `dist/`. See [validation details](docs/VALIDATION.md) for tested behavior and remaining checks.
+37 automated tests cover speed changes, reset, keyboard use, ads, navigation, and player replacement. Browser packages are created in `dist/`. See [validation details](docs/VALIDATION.md) for tested behavior and remaining checks.
 
 [Report a problem](https://github.com/priyanshubuild/speedflow/issues). SpeedFlow is an independent project, not affiliated with YouTube or Google.

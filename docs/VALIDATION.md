@@ -1,4 +1,4 @@
-# SpeedFlow 3.1 validation
+# SpeedFlow 3.1.1 validation
 
 ## Player inspection and interface
 
@@ -10,7 +10,7 @@ The live page was inspected; the extension was not installed into that browser. 
 
 ## Automated checks
 
-All **24 tests** pass, along with JavaScript syntax checks. The suite uses jsdom and simulated browser APIs to cover:
+All **37 tests** pass, along with JavaScript syntax checks. The suite uses jsdom and simulated browser APIs to cover:
 
 - Corrupt saved values, range boundaries, speed formatting, and Chrome/Firefox API namespaces.
 - Inline control order, a noninteractive readout, accessible reset focus recovery, and inherited text size/weight.
@@ -19,10 +19,21 @@ All **24 tests** pass, along with JavaScript syntax checks. The suite uses jsdom
 - Native rate changes, changed sources, replacement videos, and unrelated previews.
 - Ads already playing at mount, ad transitions, rebuilt control bars, removed widgets/status, and navigation.
 - Duplicate injection, storage failures, rejected playback speeds, and rollback of rejected cross-tab changes.
+- Synchronous API/property-access failures, invalidated contexts, callback-only Chromium APIs, and callback errors.
+- Cleanup of queued saves and storage listeners, late startup reads after disposal, and back/forward cache restores.
+- No redundant writes for cross-tab updates; fallback to a playable rate when a new source rejects the saved speed.
 
 These tests simulate events and APIs. They do not prove real media playback or permission enforcement in each browser.
 
 The Firefox package passes Mozilla's `web-ext lint` with zero errors, warnings, or notices. All three browser archives pass ZIP integrity and manifest asset checks. Generated unpacked packages remove retired popup files; archives contain no test files, dependencies, or repository metadata.
+
+## Reload error fixed in 3.1.1
+
+The reported `Uncaught Error: Extension context invalidated.` occurred on the debounced storage write in an already-open YouTube tab. Chromium can throw synchronously when the extension context has been invalidated, before a Promise exists. The old trailing `.catch()` did not catch that path. A failing regression reproduced the uncaught error before the fix.
+
+Storage reads, writes, and event subscription now have synchronous and asynchronous error boundaries. Callback-only Chromium calls consume `runtime.lastError`; Firefox uses its Promise API. When the context is gone, the old instance cancels pending work, removes controls, and releases listeners/observers. Temporary storage failures preserve usable in-tab controls. Refresh open YouTube tabs after updating or reloading the extension to load the new instance.
+
+These context failures are simulated in regression tests. Actual browser-extension reload behavior still needs installed-extension verification.
 
 ## Interactive fixture checks — October 4, 2026
 

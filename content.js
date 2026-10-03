@@ -8,7 +8,56 @@
   const controllers = new Map();
   let prefs = { ...C.DEFAULTS }, speed = 1, initialized = false;
   let scheduled = 0, saveTimer = 0, storageNotice = false, activeController = null;
+  let disposed = false, storageAvailable = true, storageEvents = null;
   const lifetime = new AbortController();
+
+  function contextAlive() {
+    try { return Boolean(extension?.runtime?.id); } catch { return false; }
+  }
+  function storageFailure(error) {
+    if (!contextAlive() || /extension context invalidated/i.test(String(error?.message || error))) {
+      storageAvailable = false;
+      dispose();
+    }
+  }
+  function ensureContext() {
+    if (disposed) return false;
+    if (contextAlive()) return true;
+    storageAvailable = false;
+    dispose();
+    return false;
+  }
+  async function storageCall(method, value) {
+    // Chrome may throw synchronously after a reload, before returning a Promise.
+    // Keep API/property access inside this boundary, including callback-only APIs.
+    try {
+      if (!storageAvailable || !contextAlive()) throw new Error('Extension context invalidated.');
+      const local = extension.storage.local;
+      if (globalThis.browser) return await local[method](value);
+      return await new Promise((resolve, reject) => {
+        const result = local[method](value, response => {
+          try {
+            const error = extension.runtime.lastError;
+            if (error) reject(new Error(error.message));
+            else resolve(response);
+          } catch (error) { reject(error); }
+        });
+        // Some Chromium implementations also return a Promise with a callback.
+        if (result?.then) result.then(resolve, reject);
+      });
+    } catch (error) {
+      storageFailure(error);
+      throw error;
+    }
+  }
+  async function saveSpeed(notify = true) {
+    prefs.sfSpeed = speed;
+    try { await storageCall('set', { sfSpeed: speed }); }
+    catch {
+      if (!disposed && notify) announce('Speed could not be saved. It will still work in this tab.', true);
+      storageNotice = true;
+    }
+  }
 
   function element(tag, className, text) {
     const node = document.createElement(tag);
@@ -39,18 +88,16 @@
     if (controller) controller.notify(message, visible);
   }
   function persistSpeed() {
+    if (disposed) return;
     clearTimeout(saveTimer);
     // Coalesce held-key changes rather than writing on every event.
     saveTimer = setTimeout(() => {
       saveTimer = 0;
-      prefs.sfSpeed = speed;
-      extension.storage.local.set({ sfSpeed: speed }).catch(() => {
-        announce('Speed could not be saved. It will still work in this tab.', true);
-        storageNotice = true;
-      });
+      void saveSpeed();
     }, 160);
   }
-  function changeSpeed(next, source, report = true) {
+  function changeSpeed(next, source, report = true, save = true) {
+    if (!ensureContext()) return { ok: false, error: 'Refresh YouTube after reloading the extension.' };
     if (!C.validSpeed(next)) return { ok: false, error: 'Choose a speed from 0.25× to 10×.' };
     if (source?.adPlaying()) {
       announce('Speed controls are paused during ads. Your speed will resume afterward.');
@@ -66,7 +113,7 @@
       announce('This browser or video cannot play at that speed. Try a lower value.', true);
       return { ok: false, error: 'This browser or video rejected that playback speed.' };
     }
-    persistSpeed();
+    if (save) persistSpeed();
     for (const controller of controllers.values()) { controller.error = ''; controller.update(); }
     if (report) announce(`Playback speed ${C.format(speed)}.`);
     return { ok: true, speed };
@@ -120,8 +167,9 @@
       player.addEventListener('focusin', () => { activeController = this; }, { signal: this.signal });
       player.addEventListener('pointerenter', () => { activeController = this; }, { signal: this.signal });
       this.attributes = new MutationObserver(() => {
+        if (!ensureContext()) return;
         const ad = this.adPlaying();
-        if (this.wasAd && !ad) this.apply();
+        if (this.wasAd && !ad) this.restoreSpeed();
         this.wasAd = ad;
         this.update();
       });
@@ -147,9 +195,13 @@
       this.mediaSource = video.currentSrc || video.src;
       this.mediaAbort = new AbortController();
       const signal = this.mediaAbort.signal;
-      const reapply = () => { this.mediaSource = video.currentSrc || video.src; this.apply(); this.update(); };
+      const reapply = () => {
+        if (!ensureContext()) return;
+        this.mediaSource = video.currentSrc || video.src; this.restoreSpeed(); this.update();
+      };
       for (const name of ['loadedmetadata', 'loadeddata', 'canplay', 'play']) video.addEventListener(name, reapply, { signal });
       video.addEventListener('ratechange', () => {
+        if (!ensureContext()) return;
         if (this.adPlaying() || !this.video) return;
         if (this.expectedRate !== null && Math.abs(video.playbackRate - this.expectedRate) < 0.001) {
           this.expectedRate = null;
@@ -162,11 +214,13 @@
           changeSpeed(video.playbackRate, this);
         }
       }, { signal });
-      if (!this.apply()) {
-        speed = C.validSpeed(video.playbackRate) ? video.playbackRate : 1;
-        persistSpeed();
-        this.notify('The saved speed was unavailable for this video. Playback speed has been adjusted.', true);
-      }
+      this.restoreSpeed();
+    }
+    restoreSpeed() {
+      if (this.apply()) return;
+      const actual = this.video?.playbackRate;
+      changeSpeed(C.validSpeed(actual) ? actual : 1, null, false);
+      this.notify('The saved speed was unavailable for this video. Playback speed has been adjusted.', true);
     }
     apply() {
       if (!this.video || this.adPlaying()) return true;
@@ -237,7 +291,7 @@
 
   function reconcile() {
     scheduled = 0;
-    if (!initialized) return;
+    if (!initialized || !ensureContext()) return;
     const allowed = supportedRoute();
     for (const [player, controller] of controllers) {
       const controls = player.querySelector('.ytp-chrome-controls');
@@ -255,7 +309,7 @@
       if (target && player.querySelector('video')) controllers.set(player, new PlayerController(player, controls, target));
     }
   }
-  function schedule() { if (!scheduled) scheduled = requestAnimationFrame(reconcile); }
+  function schedule() { if (!disposed && !scheduled) scheduled = requestAnimationFrame(reconcile); }
   const relevant = '.html5-video-player, .ytp-chrome-controls, .ytp-right-controls, video, .sf-controls, .sf-sr-only';
   const observer = new MutationObserver(records => {
     if (!initialized) return;
@@ -263,21 +317,29 @@
       node.nodeType === 1 && (node.matches(relevant) || node.querySelector(relevant))))) schedule();
   });
   observer.observe(document.documentElement, { childList: true, subtree: true });
-  window.addEventListener('pagehide', event => {
-    if (event.persisted) return; // The existing controllers survive a back/forward cache restore.
+  function dispose(flush = false) {
+    if (disposed) return;
+    disposed = true;
+    const pendingSave = saveTimer;
+    clearTimeout(saveTimer);
+    saveTimer = 0;
     observer.disconnect();
     lifetime.abort();
     cancelAnimationFrame(scheduled);
-    if (saveTimer) {
-      extension.storage.local.set({ sfSpeed: speed }).catch(() => {});
-    }
-    clearTimeout(saveTimer);
+    scheduled = 0;
+    try { storageEvents?.removeListener(storageChanged); } catch { /* Already invalidated. */ }
+    storageEvents = null;
     for (const controller of controllers.values()) controller.destroy();
     controllers.clear();
+    if (flush && pendingSave && storageAvailable) void saveSpeed(false);
+  }
+  window.addEventListener('pagehide', event => {
+    if (!event.persisted) dispose(true); // Keep controllers during a back/forward cache restore.
   }, { signal: lifetime.signal });
   for (const event of ['yt-navigate-finish', 'yt-page-data-updated', 'popstate', 'pageshow']) window.addEventListener(event, schedule, { signal: lifetime.signal });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) schedule(); }, { signal: lifetime.signal });
   window.addEventListener('keydown', event => {
+    if (!ensureContext()) return;
     const action = C.shortcut(event);
     if (!action) return;
     const controller = activeController?.player.isConnected ? activeController : [...controllers.values()].find(item => item.player.getBoundingClientRect().width > 0);
@@ -285,7 +347,8 @@
     event.preventDefault(); event.stopPropagation();
     changeSpeed(action === 'reset' ? 1 : C.clamp(speed + (action === 'increase' ? C.STEP : -C.STEP)), controller);
   }, { signal: lifetime.signal });
-  extension.storage.onChanged.addListener((changes, area) => {
+  function storageChanged(changes, area) {
+    if (!ensureContext()) return;
     if (area !== 'local' || !Object.keys(C.DEFAULTS).some(key => key in changes)) return;
     const updated = { ...prefs };
     for (const key of Object.keys(C.DEFAULTS)) if (key in changes) updated[key] = changes[key].newValue;
@@ -293,15 +356,23 @@
     const nextSpeed = prefs.sfSpeed;
     reconcile();
     if (nextSpeed !== speed) {
-      const result = changeSpeed(nextSpeed, null, false);
+      // The other tab already saved this value; do not echo it back to storage.
+      const result = changeSpeed(nextSpeed, null, false, false);
       if (!result.ok) persistSpeed();
     }
     for (const controller of controllers.values()) { controller.apply(); controller.update(); }
-  });
-  extension.storage.local.get(Object.keys(C.DEFAULTS)).then(raw => {
+  }
+  try {
+    if (!contextAlive()) throw new Error('Extension context invalidated.');
+    storageEvents = extension.storage.onChanged;
+    storageEvents.addListener(storageChanged);
+  } catch (error) { storageNotice = true; storageFailure(error); }
+  storageCall('get', Object.keys(C.DEFAULTS)).then(raw => {
+    if (disposed) return;
     prefs = C.preferences(raw);
     speed = prefs.sfSpeed;
   }).catch(() => { storageNotice = true; }).finally(() => {
+    if (disposed) return;
     initialized = true;
     reconcile();
     if (storageNotice) announce('Preferences could not be loaded. Speed controls still work in this tab.', true);

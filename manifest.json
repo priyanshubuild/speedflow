@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SpeedFlow",
-  "version": "3.1.0",
+  "version": "3.1.1",
   "description": "Simple YouTube speed controls: reset, slower, speed, faster. Native styling, keyboard shortcuts, and locally remembered speed.",
   "permissions": [
     "storage"

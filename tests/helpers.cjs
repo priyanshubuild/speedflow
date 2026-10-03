@@ -9,7 +9,11 @@ function storageMock(initial = {}, reject = false) {
   const values = { ...initial }, listeners = [], writes = [];
   return {
     values, writes,
-    onChanged: { addListener(listener) { listeners.push(listener); } },
+    onChanged: {
+      addListener(listener) { listeners.push(listener); },
+      removeListener(listener) { const index = listeners.indexOf(listener); if (index >= 0) listeners.splice(index, 1); },
+      hasListeners() { return listeners.length > 0; },
+    },
     local: {
       async get() { if (reject) throw Error('storage blocked'); return { ...values }; },
       async set(patch) {
@@ -31,6 +35,7 @@ async function contentFixture(options = {}) {
   const w = dom.window, messages = [];
   const storage = storageMock(options.prefs, options.rejectStorage);
   const extension = { storage, runtime: { id: 'speedflow-test', onMessage: { addListener(fn) { messages.push(fn); } } } };
+  options.configure?.({ w, storage, extension });
   w[options.api || 'chrome'] = extension;
   w.HTMLElement.prototype.getBoundingClientRect = function () {
     const width = this.classList.contains('html5-video-player') ? (options.width || 800) : 48;

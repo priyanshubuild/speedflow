@@ -168,3 +168,137 @@ test('speed typography inherits the native player time font weight and size', as
   assert.equal(f.query('.sf-controls').style.getPropertyValue('--sf-text-weight'), '400');
   assert.equal(f.query('.sf-controls').style.getPropertyValue('--sf-text-size'), '12px');
 });
+test('synchronous storage failures do not escape the debounce timer or pagehide', async t => {
+  const errors = [];
+  const f = await setup(t, { configure({ w, storage }) {
+    w.addEventListener('error', event => { errors.push(event.error); event.preventDefault(); });
+    storage.local.set = () => { throw Error('Storage temporarily unavailable'); };
+  } });
+  f.click('.sf-controls button:last-child'); await tick(190);
+  assert.equal(errors.length, 0);
+  assert.equal(f.query('video').playbackRate, 1.25);
+  assert.match(f.query('[role=status]').textContent, /could not be saved/);
+  f.click('.sf-controls button:last-child');
+  f.w.dispatchEvent(new f.w.PageTransitionEvent('pagehide'));
+  assert.equal(errors.length, 0);
+});
+test('synchronous storage reads and event subscription failures still allow playback controls', async t => {
+  const f = await setup(t, { configure({ storage }) {
+    storage.local.get = () => { throw Error('Storage temporarily unavailable'); };
+    storage.onChanged.addListener = () => { throw Error('Storage temporarily unavailable'); };
+  } });
+  assert.ok(f.query('.sf-controls'));
+  f.click('.sf-controls button:last-child');
+  assert.equal(f.query('video').playbackRate, 1.25);
+});
+test('invalidated context thrown by storage releases old controls and listeners', async t => {
+  const errors = [];
+  const f = await setup(t);
+  f.w.addEventListener('error', event => { errors.push(event.error); event.preventDefault(); });
+  let attempts = 0;
+  f.storage.local.set = () => { attempts++; throw Error('Extension context invalidated.'); };
+  f.click('.sf-controls button:last-child'); await tick(190);
+  assert.equal(errors.length, 0);
+  assert.equal(attempts, 1);
+  assert.equal(f.query('.sf-controls'), null);
+  assert.equal(f.storage.onChanged.hasListeners(), false);
+  f.key(']'); await tick(190);
+  assert.equal(attempts, 1); assert.equal(f.query('video').playbackRate, 1.25);
+});
+test('a missing runtime after reload cancels the queued save before calling storage', async t => {
+  const f = await setup(t);
+  f.click('.sf-controls button:last-child');
+  delete f.extension.runtime.id;
+  await tick(190);
+  assert.equal(f.storage.writes.length, 0);
+  assert.equal(f.query('.sf-controls'), null);
+  f.query('video').playbackRate = 1.75;
+  f.query('video').dispatchEvent(new f.w.Event('play'));
+  assert.equal(f.query('video').playbackRate, 1.75);
+});
+test('Firefox Promise rejection on invalidation also releases the old instance', async t => {
+  const f = await setup(t, { api: 'browser' });
+  f.storage.local.set = async () => { throw Error('Extension context invalidated.'); };
+  f.click('.sf-controls button:last-child'); await tick(190);
+  assert.equal(f.query('.sf-controls'), null);
+  assert.equal(f.storage.onChanged.hasListeners(), false);
+});
+test('storage property access throwing during a save is contained', async t => {
+  const f = await setup(t);
+  Object.defineProperty(f.extension, 'storage', { get() { throw Error('Extension context invalidated.'); } });
+  f.click('.sf-controls button:last-child'); await tick(190);
+  assert.equal(f.query('.sf-controls'), null);
+  assert.equal(f.storage.onChanged.hasListeners(), false);
+});
+test('callback-only Chromium storage loads and saves without relying on a Promise', async t => {
+  const f = await setup(t, { prefs: { sfSpeed: 1.5 }, configure({ storage }) {
+    const get = storage.local.get.bind(storage.local), set = storage.local.set.bind(storage.local);
+    storage.local.get = (keys, callback) => { void get(keys).then(callback); };
+    storage.local.set = (value, callback) => { void set(value).then(() => callback()); };
+  } });
+  assert.equal(f.query('video').playbackRate, 1.5);
+  f.click('.sf-controls button:last-child'); await tick(190);
+  assert.equal(f.storage.values.sfSpeed, 1.75);
+});
+test('callback storage errors are consumed and allow temporary in-tab speed changes', async t => {
+  const f = await setup(t, { configure({ storage, extension }) {
+    storage.local.set = (value, callback) => {
+      queueMicrotask(() => {
+        extension.runtime.lastError = { message: 'Storage temporarily unavailable' };
+        callback(); delete extension.runtime.lastError;
+      });
+    };
+  } });
+  f.click('.sf-controls button:last-child'); await tick(190);
+  assert.equal(f.query('video').playbackRate, 1.25);
+  assert.match(f.query('.sf-controls').title, /could not be saved/);
+  assert.ok(f.query('.sf-controls'));
+});
+test('pagehide flushes a queued save once and removes the storage listener', async t => {
+  const f = await setup(t);
+  f.click('.sf-controls button:last-child');
+  f.w.dispatchEvent(new f.w.PageTransitionEvent('pagehide'));
+  f.w.dispatchEvent(new f.w.PageTransitionEvent('pagehide'));
+  await tick(190);
+  assert.equal(f.storage.values.sfSpeed, 1.25);
+  assert.equal(f.storage.writes.length, 1);
+  assert.equal(f.storage.onChanged.hasListeners(), false);
+  assert.equal(f.query('.sf-controls'), null);
+});
+test('a late storage read cannot remount controls after the page is disposed', async t => {
+  let resolve;
+  const f = await setup(t, { configure({ storage }) {
+    storage.local.get = () => new Promise(done => { resolve = done; });
+  } });
+  f.w.dispatchEvent(new f.w.PageTransitionEvent('pagehide'));
+  resolve({ sfSpeed: 2 }); await tick();
+  assert.equal(f.query('.sf-controls'), null);
+  assert.equal(f.storage.onChanged.hasListeners(), false);
+});
+test('back-forward cache keeps controls and shortcuts alive', async t => {
+  const f = await setup(t);
+  f.w.dispatchEvent(new f.w.PageTransitionEvent('pagehide', { persisted: true }));
+  f.w.dispatchEvent(new f.w.PageTransitionEvent('pageshow', { persisted: true }));
+  await tick(); f.key(']');
+  assert.equal(f.query('video').playbackRate, 1.25);
+  assert.ok(f.storage.onChanged.hasListeners());
+});
+test('cross-tab changes do not write the same preference back to storage', async t => {
+  const f = await setup(t);
+  await f.storage.local.set({ sfSpeed: 2 }); await tick(190);
+  assert.equal(f.query('video').playbackRate, 2);
+  assert.equal(f.storage.writes.length, 1);
+});
+test('a replacement source rejecting saved speed shows and saves the actual playable rate', async t => {
+  const f = await setup(t, { prefs: { sfSpeed: 4 } });
+  let actual = 1;
+  Object.defineProperty(f.query('video'), 'playbackRate', {
+    get: () => actual, set(value) { if (value > 2) throw Error('unsupported'); actual = value; },
+  });
+  f.query('video').src = 'https://example.test/limited.mp4';
+  f.query('video').dispatchEvent(new f.w.Event('loadedmetadata'));
+  assert.equal(actual, 1);
+  assert.equal(f.query('.sf-readout').textContent, '1.0×');
+  assert.match(f.query('.sf-controls').title, /saved speed was unavailable/);
+  await tick(190); assert.equal(f.storage.values.sfSpeed, 1);
+});
