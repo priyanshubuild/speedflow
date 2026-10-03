@@ -1,0 +1,21 @@
+# macOS and Windows metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local editor settings
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Downloaded or packaged copies
+*.zip
+*.crx
+*.pem
+
+# Local dependencies, logs, and environment secrets
+node_modules/
+*.log
+.env
+.env.*
