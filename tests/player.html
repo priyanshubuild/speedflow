@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SpeedFlow — Player integration preview</title>
+<link rel="stylesheet" href="/content.css">
+<style>
+*{box-sizing:border-box}body{margin:0;background:#fff;color:#0f0f0f;font:14px/1.5 Arial,sans-serif}header{height:64px;display:flex;align-items:center;gap:18px;padding:0 32px;border-bottom:1px solid #eee}header strong{font-size:21px;letter-spacing:-1px}header strong b{display:inline-grid;place-items:center;width:30px;height:22px;border-radius:7px;background:#f03;color:white;font-size:14px;margin-right:4px}.preview-label{margin-left:auto;color:#606060;font-size:12px}main{max-width:1080px;padding:28px 32px;margin:auto}.html5-video-player{position:relative;width:100%;height:520px;overflow:hidden;border-radius:12px;background:linear-gradient(155deg,#93bdbb 0%,#507c86 35%,#274b51 70%,#16322f 100%);color:#eee;font-family:'YouTube Noto',Roboto,Arial,Helvetica,sans-serif}.scene{position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse at 60% -10%,rgba(255,242,211,.45),transparent 60%)}.scene::after{content:'';position:absolute;inset:55% -20% -40%;background:#203c37;transform:rotate(-8deg);border-radius:50%}.video-title{position:absolute;top:28px;left:28px;color:#fff;z-index:1;font-size:16px;font-weight:500}video{position:absolute;width:100%;height:100%;object-fit:cover}.ytp-chrome-bottom{position:absolute;bottom:8px;left:12px;right:12px;padding-top:20px;background:linear-gradient(transparent,rgba(0,0,0,.15));height:72px}.progress{height:3px;background:rgba(255,255,255,.3);margin:0 4px 10px;position:relative}.progress::before{content:'';display:block;width:35%;height:3px;background:#f03}.ytp-chrome-controls{display:flex;justify-content:space-between;align-items:center;height:40px;gap:12px}.ytp-left-controls,.ytp-right-controls,.ytp-right-controls-left,.ytp-right-controls-right{display:flex;align-items:center;gap:0}.ytp-left-controls,.ytp-right-controls-left,.ytp-right-controls-right{background:rgba(0,0,0,.35);border-radius:24px}.ytp-right-controls{gap:6px}.ytp-button{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:48px;height:40px;padding:0;background:transparent;border:0;color:#eee;font:11.99px/56px 'YouTube Noto',Roboto,Arial,Helvetica,sans-serif;cursor:pointer}.ytp-button svg{width:24px;height:24px;fill:currentColor}.time{padding:0 16px 0 0;font-size:12px;white-space:nowrap}.chapter{padding:0 20px 0 8px;white-space:nowrap}.ytp-settings-button{font-size:25px}.native-other{font-size:22px}.below{display:flex;align-items:center;justify-content:space-between;margin-top:18px}h1{margin:0;font-size:21px;letter-spacing:-.4px}.below p{margin:4px 0 0;color:#606060}.test-controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:24px}.test-controls button{padding:9px 14px;border:1px solid #ddd;background:#f8f8f8;border-radius:8px;cursor:pointer;font:inherit}.test-note{color:#606060;font-size:12px;margin-top:12px}#native-state{color:#606060;font-size:12px}@media(max-width:700px){main{padding:20px 12px}.html5-video-player{height:400px}.chapter{display:none}.ytp-button{width:36px}.time{padding-right:8px}.ytp-left-controls .volume{display:none}.preview-label{display:none}}
+</style>
+<script src="/tests/preview-api.js"></script>
+<script src="/core.js" defer></script><script src="/content.js" defer></script>
+</head>
+<body>
+<header><span aria-hidden="true">☰</span><strong><b>▶</b>YouTube</strong><span class="preview-label">SpeedFlow · Local player integration preview</span></header>
+<main>
+<div id="movie_player" class="html5-video-player ytp-delhi-modern">
+  <video class="html5-main-video"></video><div class="scene"></div><div class="video-title">A little more time for the interesting parts.</div>
+  <div class="ytp-chrome-bottom"><div class="progress"></div><div class="ytp-chrome-controls">
+    <div class="ytp-left-controls"><button class="ytp-button" aria-label="Play"><svg viewBox="0 0 24 24"><path d="M7 4v16l14-8z"/></svg></button><button class="ytp-button volume" aria-label="Mute"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 4V5L7 9H3zm12-3v2a5 5 0 010 8v2a7 7 0 000-12z"/></svg></button><span class="time">4:32 / 12:48</span><span class="chapter">The journey ›</span></div>
+    <div class="ytp-right-controls"><div class="ytp-right-controls-left"><button class="ytp-button native-other" aria-label="Captions">▣</button><button class="ytp-button ytp-settings-button" aria-label="Settings" aria-expanded="false">⚙</button></div><div class="ytp-right-controls-right"><button class="ytp-button native-other" aria-label="Theater mode">▭</button><button class="ytp-button native-other" aria-label="Full screen">⛶</button></div></div>
+  </div></div>
+</div>
+<div class="below"><div><h1>Playback speed. Right where you watch.</h1><p>− and + stay on the player. Click the speed for more control.</p></div><span id="native-state">Player rate: 1×</span></div>
+<div class="test-controls"><button id="replace">Rebuild player controls</button><button id="ad">Start ad</button><button id="native">Native speed: 1.75×</button><button id="narrow">Narrow player</button><button id="disable">Disable extension</button></div>
+<p class="test-note">This test fixture recreates the nested control structure inspected on YouTube. It runs the production SpeedFlow scripts with a simulated extension API.</p>
+</main>
+<script>
+const player = document.querySelector('#movie_player');
+let originalControls = document.querySelector('.ytp-chrome-controls').outerHTML;
+document.querySelector('#replace').onclick = () => { document.querySelector('.ytp-chrome-controls').outerHTML = originalControls; };
+document.querySelector('#ad').onclick = event => { const ad = player.classList.toggle('ad-showing'); if(ad) player.querySelector('video').playbackRate = 1; event.target.textContent = ad ? 'End ad' : 'Start ad'; };
+document.querySelector('#native').onclick = () => { player.querySelector('video').playbackRate = 1.75; };
+document.querySelector('#narrow').onclick = event => { const narrow = player.style.width === '480px'; player.style.width = narrow ? '100%' : '480px'; event.target.textContent = narrow ? 'Narrow player' : 'Full-width player'; };
+document.querySelector('#disable').onclick = async event => { const old = (await browser.storage.local.get()).sfEnabled !== false; await browser.storage.local.set({sfEnabled:!old}); event.target.textContent = old ? 'Enable extension' : 'Disable extension'; };
+player.querySelector('video').addEventListener('ratechange', event => { document.querySelector('#native-state').textContent = `Player rate: ${event.target.playbackRate}×`; });
+</script>
+</body></html>

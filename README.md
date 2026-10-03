@@ -1,175 +1,229 @@
 # SpeedFlow
 
-SpeedFlow is a Chrome extension that adds playback speed controls directly to the YouTube video player. Slow down a tutorial, speed up a lecture, or return to normal speed without opening YouTube's settings menu.
+### Playback speed. Right where you watch.
 
-## Features
+A lecture at 1.5×. A tricky explanation at 0.75×. A quick return to normal. SpeedFlow puts **− · speed · + directly on the YouTube player**, so changing pace takes one click instead of a trip through Settings.
 
-- Adjust playback speed from **0.25× to 10×** in **0.25× steps**.
-- Use the **−** and **+** buttons inside the YouTube player.
-- Reset to normal playback with the **1×** button or a keyboard shortcut.
-- Remember your selected speed using YouTube's local browser storage.
-- Hear a soft tick when you change speed.
+**[Download the source ZIP](https://github.com/priyanshubuild/speedflow/archive/refs/heads/main.zip)** · [Installation](#install-in-chrome--step-by-step) · [Browser support](#browser-support) · [Report a problem](https://github.com/priyanshubuild/speedflow/issues)
 
-You need desktop Google Chrome and a video on [YouTube](https://www.youtube.com/). No build tools, terminal commands, or paid account are required to install this source code.
+## Why use it?
+
+- **Controls in front.** Decrease, current speed, and increase sit beside YouTube's existing player buttons. The essential controls never live inside Settings.
+- **A familiar fit.** White icons, understated hover feedback, and the player's own font, color, and button height. No oversized floating badge, extra toolbar, or forced sound effects.
+- **More control when you want it.** Click the speed readout for eight presets, a 0.25×–10× slider, and a reset button.
+- **Keyboard friendly.** Use `[` to slow down, `]` to speed up, and `\` to reset. Typing fields and browser shortcuts are left alone.
+- **Your next video, your pace.** Remember speed across YouTube tabs in the same browser profile, or switch remembering off for a temporary choice.
+- **Private by design.** No accounts, analytics, external requests, or runtime dependencies. Preferences stay in the extension's local browser storage.
+
+YouTube's own speed controls still work: SpeedFlow accepts their changes instead of overriding them. Adjustments pause during detected ad breaks and resume afterward.
+
+## Preview
+
+![SpeedFlow controls and optional speed panel](docs/player-preview.jpg)
+
+*The preview uses a local test player based on the live YouTube control structure inspected on October 3, 2026. It runs SpeedFlow's production UI code; it is not a screenshot of an installed extension on YouTube.*
+
+## Browser support
+
+SpeedFlow uses Manifest V3 and standard WebExtension APIs, with both `chrome` and `browser` namespaces. A source ZIP is not an installer for every browser.
+
+| Browser | Installation route | Status |
+| --- | --- | --- |
+| **Chrome** | Extract the source ZIP, then **Load unpacked**. | Primary target. |
+| **Edge, Brave, Opera, Vivaldi** | Load the same folder through the browser's extension developer tools. | Chromium compatibility targets; browser-specific installation still needs manual verification. |
+| **Firefox 140+** | Load `manifest.json` temporarily, or generate the Firefox package. | Firefox API path covered by automated tests; no signed release published. |
+| **Safari** | Package the Safari source using Apple's tools, then build and install the resulting app. | Source prepared for conversion; a built, signed Safari app is not included or verified. |
+| **Mobile browsers / YouTube app** | Browser and extension support varies. | Outside this desktop release's support scope. |
+
+Regular YouTube videos, theater/fullscreen player layouts, and permitted YouTube embeds use the same widget. Embed access covers `www.youtube.com` and the privacy-enhanced `www.youtube-nocookie.com` player. Embedded-page and fullscreen behavior should also be checked in your target browser. **YouTube Shorts, casting, and controls inside an operating system's Picture-in-Picture window are not supported.**
 
 ## Install in Chrome — step by step
 
-### 1. Download the code as a ZIP
+You only need desktop Chrome. **No terminal, Node.js, Python, or build step is needed to use the extension.**
 
-1. Open the [SpeedFlow GitHub repository](https://github.com/priyanshubuild/speedflow).
-2. Select the **main** branch if another branch is selected.
+### 1. Download the ZIP
+
+1. Open the [SpeedFlow repository](https://github.com/priyanshubuild/speedflow).
+2. Select the **main** branch.
 3. Click the green **Code** button above the file list.
-4. Click **Download ZIP**.
-5. Wait for `speedflow-main.zip` to finish downloading. It will normally appear in your **Downloads** folder.
+4. Choose **Download ZIP** and wait for `speedflow-main.zip` to download.
 
-You can also use the [direct ZIP download](https://github.com/priyanshubuild/speedflow/archive/refs/heads/main.zip).
+Or use the [direct ZIP download](https://github.com/priyanshubuild/speedflow/archive/refs/heads/main.zip).
 
-### 2. Extract (unpack) the ZIP file
+### 2. Extract the ZIP
 
-Chrome needs the extracted folder, so unpack the ZIP before loading the extension.
+Chrome loads a folder of files, so extract the ZIP first:
 
-- **Windows:** Right-click `speedflow-main.zip`, choose **Extract All…**, choose a destination, and click **Extract**.
-- **macOS:** Double-click `speedflow-main.zip` in Finder. A folder named `speedflow-main` should appear beside it.
-- **Linux:** Open the ZIP with your archive manager and choose **Extract** or **Extract Here**.
+- **Windows:** Right-click `speedflow-main.zip` → **Extract All…** → **Extract**.
+- **macOS:** Double-click the ZIP in Finder.
+- **Linux:** Open the ZIP in your archive manager and choose **Extract**.
 
-Move the extracted folder to a permanent location, such as `Documents/SpeedFlow`, before installing it. Chrome uses the files in that folder, so keep it there while the extension is installed.
+Move the extracted `speedflow-main` folder somewhere permanent, such as `Documents/SpeedFlow`. Keep this folder while the extension is installed.
 
-Open the extracted folder and check that it contains these files directly:
+Open it and confirm that `manifest.json`, `core.js`, `content.js`, `content.css`, and `popup.html` are directly inside. If there is another folder inside the extracted folder, open that inner folder until you see `manifest.json`.
 
-```text
-speedflow-main/
-├── manifest.json
-├── content.js
-├── popup.html
-├── popup.js
-├── popup.css
-├── fonts/
-└── README.md
-```
+### 3. Open the Extensions page
 
-If extraction created an outer folder containing another `speedflow-main` folder, use the inner folder that contains `manifest.json`.
+In Chrome's address bar, type **`chrome://extensions`** and press **Enter**.
 
-### 3. Open Chrome's Extensions page
+### 4. Enable Developer mode
 
-1. Open **Google Chrome**.
-2. Open a new tab.
-3. Type `chrome://extensions` into the address bar and press **Enter**.
+Turn on **Developer mode** in the upper-right corner. The **Load unpacked** button should appear.
 
-### 4. Turn on Developer mode
-
-On the Extensions page, turn on the **Developer mode** switch, usually in the upper-right corner. This reveals the buttons for loading extensions from your computer.
-
-### 5. Load the unpacked extension
+### 5. Load the extracted folder
 
 1. Click **Load unpacked**.
-2. In the folder picker, navigate to the extracted `speedflow-main` folder (or the permanent location you chose).
-3. Select the **folder containing `manifest.json`**, then confirm with **Select Folder**, **Select**, or **Open**, depending on your operating system.
-4. Check that a **SpeedFlow** card appears on the Extensions page and its switch is turned on.
+2. Navigate to the extracted folder in its permanent location.
+3. Select the **folder containing `manifest.json`**.
+4. Confirm with **Select Folder**, **Select**, or **Open**.
+5. Check that the **SpeedFlow** card appears and its switch is on.
 
-Choose the extracted folder itself, rather than the ZIP file or an individual file inside the folder. You do not need to open or edit `manifest.json`.
+Choose the folder, not the ZIP and not a single file. You do not need to edit any files. These steps follow [Chrome's official unpacked-extension guide](https://developer.chrome.com/docs/extensions/get-started/tutorial/hello-world#load-unpacked).
 
-### 6. Pin SpeedFlow (optional)
+### 6. Open a video
 
-1. Click Chrome's **Extensions** button (the puzzle-piece icon beside the address bar).
-2. Find **SpeedFlow**.
-3. Click its **pin** icon to show SpeedFlow in the toolbar.
+1. Visit [YouTube](https://www.youtube.com/) and open a regular video.
+2. **Refresh any YouTube tabs that were open before installation.**
+3. Move your pointer over the video to reveal the control bar.
+4. Find **− · 1× · +** beside YouTube's existing buttons.
+5. Click **+** once: the displayed speed and video playback should become **1.25×**.
 
-Pinning gives you quick access to the toolbar button. The playback controls appear inside YouTube automatically.
+The controls follow the player bar's visibility. On very narrow players, they move into a compact row just above it so they do not cover native buttons.
 
-### 7. Open YouTube and check the controls
+### 7. Pin the toolbar button (optional)
 
-1. Open [YouTube](https://www.youtube.com/) and play a regular video.
-2. If the YouTube tab was already open when you installed SpeedFlow, **refresh that tab**.
-3. Move your mouse over the video to reveal the player controls.
-4. Look near the lower-right controls, beside the captions and settings buttons, for **−**, a speed readout such as **1.0×**, and **+**.
-5. Click **+** once. The readout should change to **1.25×** and playback should speed up.
+Click the browser's **Extensions** puzzle-piece button, find **SpeedFlow**, and click its pin. The toolbar popup offers another way to change speed, enable or pause the extension, and manage preferences.
 
-These installation steps follow [Chrome's official guide to loading unpacked extensions](https://developer.chrome.com/docs/extensions/get-started/tutorial/hello-world#load-unpacked).
+## Install in other browsers
 
-## How to use SpeedFlow
+### Edge, Brave, Opera, and Vivaldi
 
-### Player controls
+Download and extract the same source ZIP. Open the browser's extension management page (for example, `edge://extensions` or `brave://extensions`), enable Developer mode, and choose **Load unpacked**. Select the folder containing `manifest.json`, then refresh YouTube. Labels and page addresses may differ by browser version.
 
-| Control | What it does |
+### Firefox — temporary installation
+
+1. Download and extract the source ZIP.
+2. Open `about:debugging#/runtime/this-firefox` in Firefox.
+3. Click **Load Temporary Add-on…**.
+4. Select the extracted **`manifest.json` file**.
+5. Grant the requested YouTube site access if Firefox prompts you, then refresh YouTube.
+
+This installation is for testing and **ends when Firefox restarts**. Permanent installation requires a Mozilla-signed add-on. The packaging script below supplies a stable Firefox extension ID and declares that no data is collected. See [Mozilla's temporary-installation instructions](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Your_second_WebExtension) and [Firefox manifest requirements](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/manifest.json/browser_specific_settings).
+
+### Safari — source conversion
+
+Safari requires an app wrapper; **Load unpacked is not a Safari installation method**. On a Mac with the appropriate Apple development tools, first generate the Safari source folder as described below, then follow [Apple's Safari extension packaging guide](https://developer.apple.com/documentation/safariservices/packaging-a-web-extension-for-safari). Build, sign, and enable the generated Safari extension using Apple's workflow. This repository does not provide a ready-to-install Safari app.
+
+## Use SpeedFlow
+
+| Control | Action |
 | --- | --- |
-| **−** | Decreases speed by 0.25×, down to 0.25×. |
-| **Speed readout** | Shows the selected speed, such as 1.0× or 1.75×. |
-| **+** | Increases speed by 0.25×, up to 10×. |
-| **1×** | Restores normal speed. This button appears when the speed is different from 1×. |
+| **−** on the player | Decrease speed by 0.25×. |
+| **+** on the player | Increase speed by 0.25×. |
+| **Current speed** on the player | Open presets and the fine-tuning slider. |
+| **Reset to normal** in the speed panel or toolbar popup | Return to 1×. |
+| `[` / `]` | Decrease / increase by 0.25×. |
+| `\` (backslash) | Return to 1× immediately. |
 
-For example, click **+** four times from 1.0× to reach 2.0×. Click **1×** to return to normal playback.
+The range is **0.25× to 10×**, subject to what the browser and video can play. A soft-spoken tutorial may work best slower; a familiar lecture may be comfortable faster. At high rates, some browsers can mute audio or struggle to decode video. If a rate is rejected, SpeedFlow keeps the previous setting and announces the problem.
 
-SpeedFlow remembers the last selected speed in YouTube's local storage in that Chrome profile. Clearing YouTube site data clears the saved preference. The controls follow YouTube's player control bar, so move your mouse over the video if they are hidden.
+### Preferences
 
-### Keyboard shortcuts
+Open the SpeedFlow toolbar popup:
 
-| Key | Action |
-| --- | --- |
-| `]` | Increase speed by 0.25×. |
-| `[` | Decrease speed by 0.25×. |
-| `\` (backslash) | Reset to 1×. |
+- **Enable SpeedFlow:** Show or pause the extension. Disabling it removes the widget and restores the video's original rate when it can do so outside an ad break.
+- **Remember my speed:** Save the speed locally and share changes between supported tabs in this browser profile. Turn it off to keep future adjustments in the current tab; newly loaded pages start at 1×. Turning it off does not delete a previously saved value, but ignores it while remembering is off.
+- **Keyboard shortcuts:** Enable or disable the three single-key shortcuts. They do not run while typing, using the speed slider, composing text, or holding Ctrl, Command, Alt, or Shift.
 
-Keep the YouTube page focused when using these shortcuts. They are ignored while you type in a search box, comment field, or other editable area. The shortcuts refer to the characters shown; their key positions depend on your keyboard layout.
+### Accessibility
 
-### Toolbar button
+Use **Tab** to reach the three player buttons, then **Enter** or **Space** to activate them. Press **Arrow Down** on the speed readout to open the panel. Inside it, Tab reaches presets, the labeled native range slider, reset, and close controls. Use arrow keys on the slider; press **Escape** to close the panel and return focus to the speed readout.
 
-Clicking the SpeedFlow toolbar icon attempts to activate the script on the current tab, then closes its tiny popup immediately. A large popup or separate settings window is not expected. Use the toolbar button while a YouTube tab is active; the main interface lives in the video player.
+Controls have descriptive accessible names, selected preset states, announced speed changes, and visible keyboard focus. The interface respects reduced motion and offers system-color styling in forced-colors mode. Controls remain visible while the SpeedFlow panel or player buttons hold focus. On short players, the panel scrolls to keep its contents available.
+
+These features have automated coverage and browser fixture checks. They do not replace testing with your actual screen reader, browser, and assistive technology.
 
 ## Troubleshooting
 
-| Problem | What to try |
+| Problem | What to do |
 | --- | --- |
-| **“Manifest file is missing or unreadable”** when loading | Extract the ZIP fully. Choose the folder that directly contains `manifest.json`, rather than its parent or the ZIP. |
-| **Load unpacked** is missing | Turn on **Developer mode** at `chrome://extensions`. A managed work or school browser may restrict this feature. |
-| SpeedFlow is installed but the controls are missing | Make sure SpeedFlow is enabled, open a regular video on `www.youtube.com`, refresh the tab, and move your mouse over the player. |
-| The toolbar popup disappears immediately | This is expected. Look for the controls inside the YouTube player. |
-| Keyboard shortcuts do nothing | Click a non-editable area of the YouTube page and try again. Leave search and comment fields first. |
-| Changes are not taking effect | Click **Reload** on SpeedFlow's extension card, then refresh the YouTube tab. |
-| Chrome cannot find the extension files | Restore the extracted folder to its original location, or remove SpeedFlow and load it again from its new location. |
-| Speed changes conflict with another extension | Temporarily disable other YouTube speed controllers, reload SpeedFlow, and refresh YouTube. |
+| **Manifest file is missing or unreadable** | Fully extract the ZIP. Select the folder that directly contains `manifest.json`. |
+| **Load unpacked** is missing | Enable Developer mode. Work or school browser policy may block developer extensions. |
+| No player controls | Enable SpeedFlow, check its YouTube site access, refresh the tab, and open a regular video. Move your pointer over the player. |
+| Controls are dimmed during an ad | Wait for the ad to finish. SpeedFlow preserves your selected speed. |
+| The toolbar cannot connect | Refresh the YouTube tab or use **Reconnect to video** in the popup. Check site access. |
+| Shortcuts do nothing | Leave search/comment fields, focus the video page, and enable shortcuts in the popup. Keyboard layout may change which physical keys produce `[`, `]`, and `\`. |
+| Speed does not persist | Enable **Remember my speed**. Preferences are local to each browser/profile; clearing extension data or reinstalling can reset them. |
+| Another extension keeps changing speed | Disable other playback controllers while checking SpeedFlow. Multiple controllers can conflict. |
+| Playback is silent or uneven at high speed | Try a lower rate; decoding and audio behavior depend on the browser and media. |
+| An embed has no widget | Verify the embed is from a permitted YouTube origin and that the browser grants the extension access to it. |
+| Extension files disappeared | Restore the permanent folder, or remove the installation and load its new folder again. |
 
-SpeedFlow targets `www.youtube.com`. Mobile Chrome, embedded videos on other websites, and the different YouTube Shorts interface are outside this installation guide. YouTube layout changes can also affect where the widget appears.
+If a problem remains, [open an issue](https://github.com/priyanshubuild/speedflow/issues) with your browser/version, operating system, playback mode, reproduction steps, and any extension error message. Include only information you are comfortable sharing publicly.
 
-If the problem persists, open `chrome://extensions`, look for an **Errors** button on the SpeedFlow card, and report the message through [GitHub Issues](https://github.com/priyanshubuild/speedflow/issues). Include your Chrome version and the steps that reproduce the problem.
+YouTube changes its layout over time. SpeedFlow watches for replacement controls and videos and remounts after navigation, but no third-party extension can promise to work with every future layout or browser.
 
-## Update SpeedFlow
+## Update or remove
 
-An unpacked installation does not automatically download updates from GitHub.
+**Update:** Download the newest ZIP, extract it, and replace the files in the same permanent folder. Go to the extension management page, click **Reload** on SpeedFlow, and refresh open YouTube tabs. Unpacked installs do not automatically update from GitHub. Version 3 uses extension storage; a speed saved by version 2 in YouTube site data is not imported automatically.
 
-1. Download and extract the newest ZIP from this repository.
-2. Replace the extension files inside the **same permanent folder** you originally loaded in Chrome.
-3. Open `chrome://extensions`.
-4. Click **Reload** (the circular-arrow button) on the SpeedFlow card.
-5. Refresh any open YouTube tabs.
+**Disable:** Turn off **Enable SpeedFlow** in its popup to stop it immediately, or disable it in the browser's extension management page and refresh YouTube.
 
-If you prefer to use a different folder, remove the old installation and repeat **Load unpacked** using the new folder.
+**Remove:** Remove SpeedFlow from the browser's extension management page, then refresh open YouTube tabs to clear already-injected controls. You can then delete the extracted folder. Version 3 does not write preferences into YouTube site data; any old version 2 `sf_speed` preference may remain there.
 
-## Disable or remove SpeedFlow
+## Privacy and permissions
 
-1. Open `chrome://extensions`.
-2. Find the **SpeedFlow** card.
-3. Turn off its switch to disable it, or click **Remove** and confirm to uninstall it.
-4. Refresh open YouTube tabs to clear the already-injected controls.
+- **`storage`:** Store only speed, enabled state, remembering, and shortcut preferences locally in the extension.
+- **`scripting`:** Reconnect an already-open YouTube tab by loading the bundled code and styles when needed.
+- **YouTube host access:** Mount and operate player controls on `https://www.youtube.com/*` and `https://www.youtube-nocookie.com/embed/*`.
 
-After removal, you can delete the extracted folder. The saved speed is stored in YouTube's site data and can remain after uninstalling; clearing YouTube site data also clears other YouTube preferences and may sign you out.
+There is no broad `tabs` permission, background worker, tracking, remote script, account, or external network request in the extension code. Querying the active tab is restricted by the available host permissions. Content scripts run in the [browser's isolated extension context](https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts), rather than inside YouTube's page script context. Browser storage is local preference storage, not encryption or cross-browser sync.
 
-## Permissions and storage
+## Develop and package
 
-- **YouTube site access:** The manifest limits site access to `www.youtube.com`, where the player controls run.
-- **`tabs`:** The toolbar popup queries the active tab to find its target.
-- **`scripting`:** The toolbar popup can inject `content.js` as a fallback on YouTube.
-- **Local preference:** The selected speed is stored under `sf_speed` in YouTube's local storage.
+Installing from source does not require these tools. For contributors, use the full source repository (rather than a small browser package), Node.js 20+ for tests, and Python 3.10+ for packaging.
 
-The extension source includes no analytics or external network requests. YouTube page scripts can access the same site storage; this preference is not private extension storage.
+```sh
+npm ci
+npm run check
+npm test
+python3 scripts/package.py
+```
 
-## Project files
+Packaging creates unpacked folders and reproducible ZIPs in `dist/`:
+
+```text
+speedflow-chromium/                 # Chrome / Edge / other Chromium targets
+speedflow-firefox/                  # Includes Firefox manifest settings
+speedflow-safari/                   # Source for Apple's packaging workflow
+speedflow-chromium-3.0.0.zip
+speedflow-firefox-3.0.0.zip
+speedflow-safari-3.0.0.zip
+```
+
+Generate just one target with `python3 scripts/package.py --browser firefox`. Firefox archives need signing for permanent installation; Safari archives need Apple packaging. Generated files do not include tests, development dependencies, or repository metadata.
+
+To inspect the UI locally:
+
+```sh
+python3 tests/preview_server.py
+```
+
+Open `http://127.0.0.1:8765/watch?v=preview`. The fixture offers buttons to rebuild controls, simulate an ad, change the native playback rate, and disable SpeedFlow. It tests UI behavior with a simulated extension API and an unloaded video; it does not test actual YouTube playback or browser extension permission enforcement.
+
+### Project files
 
 | File | Purpose |
 | --- | --- |
-| `manifest.json` | Chrome extension name, version, permissions, and script configuration. |
-| `content.js` | YouTube player widget, playback speed handling, shortcuts, and saved preference. |
-| `popup.html` / `popup.js` | Minimal toolbar popup and fallback script activation. |
-| `popup.css` | Placeholder stylesheet; player styles are injected by `content.js`. |
-| `fonts/` | Placeholder folder; the widget uses browser and YouTube fonts. |
+| `manifest.json` | Common Manifest V3 configuration. |
+| `core.js` | Speed validation, preference normalization, URL checks, shortcut handling. |
+| `content.js` / `content.css` | Player lifecycle, playback behavior, and accessible interface. |
+| `popup.html` / `popup.js` / `popup.css` | Toolbar controls, preferences, and reconnect flow. |
+| `icons/` | Extension icons and editable SVG source. |
+| `tests/` | Automated regression tests and local browser fixture. |
+| `scripts/` | Deterministic icon generation and browser packaging. |
+| `docs/VALIDATION.md` | Verification evidence and manual release checklist. |
 
-There is no build step. Load the repository folder directly with **Load unpacked** after downloading or cloning it.
+Dependencies are for development only. The installed extension runs on plain JavaScript and CSS.
+
+SpeedFlow is an independent project and is not affiliated with or endorsed by YouTube or Google.

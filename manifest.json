@@ -1,33 +1,49 @@
 {
   "manifest_version": 3,
   "name": "SpeedFlow",
-  "version": "2.1.0",
-  "description": "Premium YouTube playback speed controller. Injects a native-feeling speed widget directly into the YouTube player.",
-
+  "version": "3.0.0",
+  "description": "YouTube speed controls, right where you watch. Accessible buttons, presets, and shortcuts with locally saved preferences.",
   "permissions": [
-    "scripting",
-    "tabs"
+    "storage",
+    "scripting"
   ],
-
   "host_permissions": [
-    "*://www.youtube.com/*"
+    "https://www.youtube.com/*",
+    "https://www.youtube-nocookie.com/embed/*"
   ],
-
-  "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'none';"
-  },
-
   "action": {
-    "default_title": "SpeedFlow",
-    "default_popup": "popup.html"
+    "default_title": "SpeedFlow \u2014 YouTube playback speed",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png"
+    }
   },
-
   "content_scripts": [
     {
-      "matches": ["*://www.youtube.com/*"],
-      "js": ["content.js"],
+      "matches": [
+        "https://www.youtube.com/*",
+        "https://www.youtube-nocookie.com/embed/*"
+      ],
+      "js": [
+        "core.js",
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
       "run_at": "document_idle",
-      "world": "MAIN"
+      "all_frames": true
     }
-  ]
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'"
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
 }

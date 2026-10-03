@@ -1,440 +1,423 @@
 (function () {
   'use strict';
+  // Private to the extension's isolated world, so page scripts cannot disable this guard.
+  if (globalThis.__speedflowInstance) return;
+  globalThis.__speedflowInstance = true;
+  const C = globalThis.SpeedFlowCore;
+  const extension = globalThis.browser || globalThis.chrome;
+  const controllers = new Map();
+  const originalRates = new WeakMap();
+  let prefs = { ...C.DEFAULTS }, speed = 1, initialized = false;
+  let scheduled = 0, saveTimer = 0, storageNotice = false, activeController = null;
+  const lifetime = new AbortController();
 
-  // Guard against double-injection (e.g. popup fallback re-injects on a tab that
-  // already has the script running via content_scripts declaration)
-  if (window.__SF_LOADED__) return;
-  window.__SF_LOADED__ = true;
-
-  /* ══════════════════════════════════════════════════════════
-     CONSTANTS
-  ══════════════════════════════════════════════════════════ */
-  const STEP    = 0.25;
-  const MIN     = 0.25;
-  const MAX     = 10.0;
-  const LS_KEY  = 'sf_speed';
-  const WIDGET_ID = 'sf-widget';
-  const STYLE_ID  = 'sf-style';
-
-  /* ══════════════════════════════════════════════════════════
-     STATE
-  ══════════════════════════════════════════════════════════ */
-  let speed       = 1.0;
-  let hostEl      = null;   // widget root <div>
-  let dispEl      = null;   // speed <span>
-  let navTimer    = 0;      // debounce handle for SPA navigation
-  let mountTimer  = 0;      // debounce handle for mount retries
-  let lastHref    = location.href;
-
-  const watched   = new WeakSet();   // videos already patched
-
-  /* ── Restore persisted speed ─────────────────────────────
-     Strict validation: finite, in-range, not ±Infinity, not NaN
-  ════════════════════════════════════════════════════════ */
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    if (raw !== null) {
-      const n = Number(raw);
-      if (Number.isFinite(n) && n >= MIN && n <= MAX) speed = n;
-    }
-  } catch (_) {}
-
-  /* ══════════════════════════════════════════════════════════
-     PURE UTILS  (no side-effects, easily unit-tested)
-  ══════════════════════════════════════════════════════════ */
-
-  /** Clamp n to [MIN, MAX], round to 2 decimal places. */
-  function clamp(n) {
-    return Math.min(MAX, Math.max(MIN, Math.round(n * 100) / 100));
+  function element(tag, className, text) {
+    const node = document.createElement(tag);
+    node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
   }
-
-  /** Format speed as "1.0×", "1.5×", "2×" etc. */
-  function fmt(n) {
-    return (n % 1 === 0
-      ? n.toFixed(1)
-      : parseFloat(n.toFixed(2)).toString()
-    ) + '\xd7';
+  function button(className, label, text) {
+    const node = element('button', className, text);
+    node.type = 'button';
+    node.setAttribute('aria-label', label);
+    node.title = label;
+    return node;
   }
-
-  /* ══════════════════════════════════════════════════════════
-     KEYBOARD SHORTCUTS — native feel global hotkeys
-  ══════════════════════════════════════════════════════════ */
-  window.addEventListener('keydown', e => {
-    // Ignore hotkeys inside text fields to allow normal typing
-    const active = document.activeElement;
-    if (active && (
-      active.tagName === 'INPUT' ||
-      active.tagName === 'TEXTAREA' ||
-      active.isContentEditable ||
-      active.closest('[contenteditable="true"]')
-    )) {
-      return;
-    }
-
-    // ] to speed up, [ to slow down, \ to reset to 1x
-    if (e.key === ']') {
-      const n = clamp(speed + STEP);
-      playTick(n);
-      setSpeed(n);
-    } else if (e.key === '[') {
-      const n = clamp(speed - STEP);
-      playTick(n);
-      setSpeed(n);
-    } else if (e.key === '\\') {
-      playTick(1.0);
-      setSpeed(1.0);
-    }
-  }, { passive: true });
-
-  /* ══════════════════════════════════════════════════════════
-     VIDEO ENFORCEMENT
-     Guards speed playback with ad-detection bypass filters
-  ══════════════════════════════════════════════════════════ */
-  function watchVideo(v) {
-    if (watched.has(v)) return;
-    watched.add(v);
-
-    // Synchronous guard: re-apply our speed if YouTube resets it
-    let busy = false;
-    v.addEventListener('ratechange', () => {
-      if (busy) return;
-
-      // Skip speed enforcement during ad breaks to prevent detection/stuttering
-      const player = v.closest('.html5-video-player');
-      if (player && (player.classList.contains('ad-showing') || player.classList.contains('ad-interrupting'))) {
-        return;
-      }
-
-      if (Math.abs(v.playbackRate - speed) <= 0.01) return;
-      busy = true;
-      v.playbackRate = speed;
-      busy = false;
-    }, { passive: true });
-
-    // Re-apply on lifecycle events (seek, buffer, ad transition)
-    const reapply = () => {
-      const player = v.closest('.html5-video-player');
-      if (player && (player.classList.contains('ad-showing') || player.classList.contains('ad-interrupting'))) {
-        return;
-      }
-      if (Math.abs(v.playbackRate - speed) > 0.01) v.playbackRate = speed;
-    };
-    v.addEventListener('loadeddata', reapply, { passive: true });
-    v.addEventListener('play',       reapply, { passive: true });
-    v.addEventListener('canplay',    reapply, { passive: true });
-    v.addEventListener('seeked',     reapply, { passive: true });
-  }
-
-  function applyToAllVideos(n) {
-    document.querySelectorAll('video').forEach(v => {
-      watchVideo(v);
-      v.playbackRate = n;
-    });
-  }
-
-  function setSpeed(n) {
-    n = clamp(n);
-    speed = n;
-    applyToAllVideos(n);
-
-    // Persist — write only if the tab's localStorage is accessible
-    try { localStorage.setItem(LS_KEY, String(n)); } catch (_) {}
-
-    // Update widget
-    if (dispEl) dispEl.textContent = fmt(n);
-    if (hostEl) hostEl.dataset.modified = (n !== 1.0) ? '1' : '';
-  }
-
-  /* ══════════════════════════════════════════════════════════
-     AUDIO — ultra-soft sine tick
-     Single oscillator, gain 0.045 (barely audible over video).
-     No noise, no sub-thump — just a clean 70ms sine decay.
-  ══════════════════════════════════════════════════════════ */
-  let audioCtx = null;
-
-  function playTick(n) {
-    try {
-      if (!audioCtx || audioCtx.state === 'closed') audioCtx = new AudioContext();
-      if (audioCtx.state === 'suspended') audioCtx.resume();
-
-      const ctx = audioCtx;
-      const t   = ctx.currentTime;
-
-      // Frequency range 490–580 Hz — inaudible shift, just haptic-feel variety
-      const hz   = 490 + ((n - MIN) / (MAX - MIN)) * 90;
-      const osc  = ctx.createOscillator();
-      const gain = ctx.createGain();
-
-      osc.type          = 'sine';
-      osc.frequency.value = hz;
-
-      gain.gain.setValueAtTime(0, t);
-      gain.gain.linearRampToValueAtTime(0.045, t + 0.004);   // 4ms attack
-      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.065); // 65ms decay
-
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(t);
-      osc.stop(t + 0.07);
-    } catch (_) {}
-  }
-
-  /* ══════════════════════════════════════════════════════════
-     CSS INJECTION — single concatenated string (fastest parse)
-  ══════════════════════════════════════════════════════════ */
-  function injectCSS() {
-    if (document.getElementById(STYLE_ID)) return;
-
-    const el = document.createElement('style');
-    el.id = STYLE_ID;
-    el.textContent =
-      /* ─── Widget wrapper: invisible inline container ──────────────────── */
-      `#sf-widget{` +
-        `display:inline-flex!important;align-items:center!important;` +
-        `vertical-align:top!important;height:100%!important;` +
-        `pointer-events:all!important;` +
-        `font-family:'Roboto','YouTube Sans',Arial,sans-serif!important;` +
-        `-webkit-user-select:none!important;user-select:none!important;` +
-        `animation:sf-in .15s cubic-bezier(0,0,.2,1) both!important}` +
-
-      `@keyframes sf-in{from{opacity:0}to{opacity:1}}` +
-
-      /* ─── Each button: identical to YouTube's .ytp-button ────────────── */
-      /* YT uses 48px-height buttons with white icons at 0.9 opacity        */
-      `#sf-widget .sf-btn{` +
-        `all:unset!important;` +
-        `display:inline-flex!important;align-items:center!important;justify-content:center!important;` +
-        `width:40px!important;height:48px!important;` +
-        `cursor:pointer!important;` +
-        `color:#fff!important;opacity:1!important;` +   /* full white — same as YT native */
-        `flex-shrink:0!important;position:relative!important;` +
-        `transition:opacity .1s cubic-bezier(0,0,.2,1)!important}` +
-      `#sf-widget .sf-btn::before{` +
-        `content:''!important;position:absolute!important;inset:8px!important;` +
-        `border-radius:50%!important;background:rgba(255,255,255,0)!important;` +
-        `transition:background .1s cubic-bezier(0,0,.2,1)!important}` +
-      `#sf-widget .sf-btn:hover{opacity:1!important}` +
-      `#sf-widget .sf-btn:hover::before{background:rgba(255,255,255,.1)!important}` +
-      `#sf-widget .sf-btn:active::before{background:rgba(255,255,255,.2)!important}` +
-      `#sf-widget .sf-btn svg{position:relative;z-index:1}` +
-
-      /* ─── Speed readout: native control-bar text style ───────────────── */
-      /* Matches the timecode font weight & brightness */
-      `#sf-widget .sf-disp{` +
-        `font-size:13px!important;font-weight:500!important;` + // Medium-bold weight matching timeline text
-        `letter-spacing:.3px!important;font-variant-numeric:tabular-nums!important;` +
-        `color:#f1f1f1!important;min-width:32px!important;` +   // YouTube's exact timeline white color
-        `text-align:center!important;line-height:1!important;` +
-        `cursor:default!important;flex-shrink:0!important;` +
-        `padding:0 2px!important}` +
-
-      /* ─── Separator: hidden (native layout has no dividers) ──────────── */
-      `#sf-widget .sf-sep{display:none!important}` +
-
-      /* ─── Reset: appears as a ghosted speed-badge beside the buttons ─── */
-      /* Only visible when speed ≠ 1×. No heavy styling — just a faint tag  */
-      `#sf-widget .sf-rst{` +
-        `all:unset!important;display:none!important;` +
-        `align-items:center!important;justify-content:center!important;` +
-        `height:18px!important;padding:0 6px!important;margin:0 2px!important;` +
-        `border-radius:3px!important;cursor:pointer!important;` +
-        `font-size:11px!important;font-weight:500!important;` + // Bold/thick weight
-        `font-family:'Roboto',Arial,sans-serif!important;letter-spacing:.3px!important;` +
-        `color:#f1f1f1!important;` +                            // Brighter/thick reset badge
-        `border:1px solid rgba(255,255,255,.30)!important;` +
-        `transition:color .1s,border-color .1s,background .1s!important;` +
-        `flex-shrink:0!important}` +
-      `#sf-widget[data-modified="1"] .sf-rst{display:inline-flex!important}` +
-      `#sf-widget .sf-rst:hover{` +
-        `color:rgba(255,255,255,1)!important;` +
-        `border-color:rgba(255,255,255,.60)!important;` +
-        `background:rgba(255,255,255,.12)!important}`;
-
-    document.head.appendChild(el);
-  }
-
-  /* ══════════════════════════════════════════════════════════
-     SVG BUILDER — no innerHTML, no XSS surface
-  ══════════════════════════════════════════════════════════ */
-  const SVG_NS = 'http://www.w3.org/2000/svg';
-
-  function makeSVG(d) {
-    const svg = document.createElementNS(SVG_NS, 'svg');
-    svg.setAttribute('width',   '20');   // matches YT native icon footprint
-    svg.setAttribute('height',  '20');
+  function icon(path) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', '0 0 24 24');
-    svg.setAttribute('fill',    'currentColor'); // Filled shapes match YouTube native icons!
-    const path = document.createElementNS(SVG_NS, 'path');
-    path.setAttribute('d',      d);
-    svg.appendChild(path);
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+    const shape = document.createElementNS(svg.namespaceURI, 'path');
+    shape.setAttribute('d', path);
+    svg.append(shape);
     return svg;
   }
-
-  /* ══════════════════════════════════════════════════════════
-     WIDGET MOUNT
-  ══════════════════════════════════════════════════════════ */
-  function mountWidget() {
-    const controls = document.querySelector('.ytp-chrome-controls');
-    if (!controls || hostEl) return;   // use cached ref, not querySelector
-
-    hostEl = document.createElement('div');
-    hostEl.id = WIDGET_ID;
-    hostEl.setAttribute('role',        'group');
-    hostEl.setAttribute('aria-label',  'SpeedFlow');
-    if (speed !== 1.0) hostEl.dataset.modified = '1';
-
-    /* Buttons using thick filled paths matching YouTube's solid control icon styles */
-    const dec = document.createElement('button');
-    dec.className = 'sf-btn';
-    dec.title = 'Slower \u22120.25\xd7';
-    dec.setAttribute('aria-label', 'Decrease speed');
-    dec.appendChild(makeSVG('M6 10h12c1.1 0 2 .9 2 2s-.9 2-2 2H6c-1.1 0-2-.9-2-2s.9-2 2-2z'));
-
-    dispEl = document.createElement('span');
-    dispEl.className = 'sf-disp';
-    dispEl.setAttribute('aria-live',  'polite');
-    dispEl.setAttribute('aria-label', 'Current speed');
-    dispEl.textContent = fmt(speed);
-
-    const inc = document.createElement('button');
-    inc.className = 'sf-btn';
-    inc.title = 'Faster +0.25\xd7';
-    inc.setAttribute('aria-label', 'Increase speed');
-    inc.appendChild(makeSVG('M6 10h12c1.1 0 2 .9 2 2s-.9 2-2 2H6c-1.1 0-2-.9-2-2s.9-2 2-2z M10 6c0-1.1.9-2 2-2s2 .9 2 2v12c0 1.1-.9 2-2 2s-2-.9-2-2V6z'));
-
-    const rst = document.createElement('button');
-    rst.className = 'sf-rst';
-    rst.title = 'Reset to 1\xd7';
-    rst.setAttribute('aria-label', 'Reset speed to 1×');
-    rst.textContent = '1\xd7';
-
-    /* Children go directly into hostEl — no pill wrapper needed.
-       We place rst on the far left (first) so that when it appears,
-       the dec, dispEl, and inc elements (anchored on the right in the
-       player's flexbar) do not shift position, completely preventing misclicks! */
-    hostEl.append(rst, dec, dispEl, inc);
-
-    /* ── Placement: first child of .ytp-right-controls ──────────────────
-       This puts our controls at the LEFT edge of the right group:
-         [1×reset] [−] [1.0×] [+]  |  [CC] [Settings] [MiniPlayer] [Theater] [FS]
-       — perfectly inline with YouTube's native right-side icon buttons.
-       Features dynamic class fallback to future-proof against player layout updates. */
-    let rightControls = controls.querySelector('.ytp-right-controls');
-    if (!rightControls) {
-      rightControls = controls.querySelector('[class*="right-controls"]') ||
-                      controls.querySelector('.ytp-chrome-controls > div:last-child');
-    }
-
-    if (rightControls) {
-      rightControls.insertBefore(hostEl, rightControls.firstChild);
-    } else {
-      controls.appendChild(hostEl);
-    }
-
-    /* Re-enforce saved speed without re-triggering observers */
-    if (speed !== 1.0) setTimeout(() => applyToAllVideos(speed), 500);
-
-    /* Block all events from reaching YouTube's player layer */
-    const stopAll = e => e.stopPropagation();
-    const BLOCK_EVENTS = ['click', 'mousedown', 'dblclick'];
-    for (const el of [hostEl, dec, inc, rst]) {
-      for (const ev of BLOCK_EVENTS) el.addEventListener(ev, stopAll);
-      el.addEventListener('touchstart', stopAll, { passive: true });
-    }
-
-    dec.addEventListener('click', e => { stopAll(e); const n = clamp(speed - STEP); playTick(n); setSpeed(n); });
-    inc.addEventListener('click', e => { stopAll(e); const n = clamp(speed + STEP); playTick(n); setSpeed(n); });
-    rst.addEventListener('click', e => { stopAll(e); playTick(1.0); setSpeed(1.0); });
+  const supportedRoute = () => location.pathname === '/watch' || /^\/(embed|live)\//.test(location.pathname);
+  function announce(message, visible = false) {
+    const controller = activeController || controllers.values().next().value;
+    if (controller) controller.notify(message, visible);
   }
-
-  /* ══════════════════════════════════════════════════════════
-     TEARDOWN — clean up on navigation
-  ══════════════════════════════════════════════════════════ */
-  function teardown() {
-    clearTimeout(navTimer);
-    if (mountTimer) {
-      cancelAnimationFrame(mountTimer);
-      mountTimer = 0;
-    }
-    hostEl?.remove();
-    hostEl  = null;
-    dispEl  = null;
-  }
-
-  /* ══════════════════════════════════════════════════════════
-     MUTATION OBSERVER
-     Optimized: debounced mount checks, cached host ref,
-     skips processing if no childList mutations are relevant
-  ══════════════════════════════════════════════════════════ */
-  new MutationObserver(mutations => {
-    /* ── SPA navigation ─────────────────────────────────── */
-    if (location.href !== lastHref) {
-      lastHref = location.href;
-      teardown();
-      navTimer = setTimeout(init, 1200);
-      // Don't return — still process new nodes in this batch
-    }
-
-    /* ── Scan for new <video> elements ──────────────────── */
-    for (const { addedNodes } of mutations) {
-      for (const node of addedNodes) {
-        if (node.nodeType !== 1) continue;   // elements only
-        if (node.tagName === 'VIDEO') {
-          watchVideo(node);
-          if (speed !== 1.0) node.playbackRate = speed;
-        } else if (node.childElementCount > 0) {
-          // querySelectorAll only when the node has children
-          node.querySelectorAll('video').forEach(v => {
-            watchVideo(v);
-            if (speed !== 1.0) v.playbackRate = speed;
-          });
-        }
-      }
-    }
-
-    /* ── Re-mount if widget was removed (e.g. YT re-renders) */
-    if (!hostEl && !mountTimer) {
-      mountTimer = requestAnimationFrame(() => {
-        mountWidget();
-        mountTimer = 0;
+  function persistSpeed() {
+    clearTimeout(saveTimer);
+    if (!prefs.sfRemember) return;
+    // Coalesce slider/held-key changes rather than writing on every event.
+    saveTimer = setTimeout(() => {
+      saveTimer = 0;
+      prefs.sfSpeed = speed;
+      extension.storage.local.set({ sfSpeed: speed }).catch(() => {
+        announce('Speed could not be saved. It will still work in this tab.', true);
+        storageNotice = true;
       });
+    }, 160);
+  }
+  function changeSpeed(next, source, report = true) {
+    if (!C.validSpeed(next)) return { ok: false, error: 'Choose a speed from 0.25× to 10×.' };
+    if (!prefs.sfEnabled) return { ok: false, error: 'Enable SpeedFlow first.' };
+    if (source?.adPlaying()) {
+      announce('Speed controls are paused during ads. Your speed will resume afterward.');
+      return { ok: false, error: 'Speed controls are paused during ads.' };
     }
+    const previous = speed;
+    speed = C.clamp(next);
+    let rejected = false;
+    for (const controller of controllers.values()) if (!controller.apply()) rejected = true;
+    if (rejected) {
+      speed = previous;
+      for (const controller of controllers.values()) { controller.apply(); controller.update(); }
+      announce('This browser or video cannot play at that speed. Try a lower value.', true);
+      return { ok: false, error: 'This browser or video rejected that playback speed.' };
+    }
+    persistSpeed();
+    for (const controller of controllers.values()) controller.update();
+    if (report) announce(`Playback speed ${C.format(speed)}.`);
+    return { ok: true, speed };
+  }
 
-  }).observe(document.body, {
-    childList: true,
-    subtree: true,
-    // attributes: false, characterData: false — defaults, listed for clarity
-  });
+  class PlayerController {
+    constructor(player, controls, target) {
+      Object.assign(this, { player, controls, target, video: null, expectedRate: null, originalRate: 1, mediaSource: '', wasAd: false });
+      this.wasAd = this.adPlaying();
+      this.abort = new AbortController();
+      this.signal = this.abort.signal;
+      this.root = element('div', 'sf-controls');
+      this.root.setAttribute('role', 'group');
+      this.root.setAttribute('aria-label', 'Playback speed');
+      this.minus = button('ytp-button sf-control sf-step', 'Decrease playback speed ([)');
+      this.minus.append(icon('M5 11h14v2H5z'));
+      this.trigger = button('ytp-button sf-control sf-trigger', 'Playback speed: 1×. Open speed options.');
+      this.readout = element('span', 'sf-readout', '1×');
+      this.trigger.append(this.readout);
+      this.plus = button('ytp-button sf-control sf-step', 'Increase playback speed (])');
+      this.plus.append(icon('M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z'));
+      this.root.append(this.minus, this.trigger, this.plus);
+      target.insertBefore(this.root, target.firstChild);
+      this.panel = element('section', 'sf-panel');
+      this.panel.id = `sf-panel-${PlayerController.nextID++}`;
+      this.panel.hidden = true;
+      this.panel.setAttribute('role', 'dialog');
+      this.panel.setAttribute('aria-label', 'Playback speed options');
+      this.trigger.setAttribute('aria-haspopup', 'dialog');
+      this.trigger.setAttribute('aria-controls', this.panel.id);
+      this.trigger.setAttribute('aria-expanded', 'false');
+      this.trigger.setAttribute('aria-keyshortcuts', 'ArrowDown');
+      const heading = element('div', 'sf-heading');
+      heading.append(element('h2', 'sf-title', 'Playback speed'));
+      this.closeButton = button('sf-option sf-close', 'Close speed options', '×');
+      heading.append(this.closeButton);
+      this.panel.append(heading);
+      const presets = element('div', 'sf-presets');
+      presets.setAttribute('role', 'group');
+      presets.setAttribute('aria-label', 'Speed presets');
+      this.presetButtons = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 3].map(value => {
+        const node = button('sf-option sf-preset', `Set playback speed to ${C.format(value)}`, C.format(value));
+        node.dataset.speed = String(value);
+        node.setAttribute('aria-pressed', 'false');
+        node.addEventListener('click', () => changeSpeed(value, this), { signal: this.signal });
+        presets.append(node);
+        return node;
+      });
+      this.panel.append(presets);
+      const rangeRow = element('div', 'sf-range-row');
+      const label = element('label', 'sf-range-label', 'Fine tune');
+      this.slider = element('input', 'sf-slider');
+      Object.assign(this.slider, { type: 'range', id: `${this.panel.id}-range`, min: String(C.MIN), max: String(C.MAX), step: String(C.STEP) });
+      label.htmlFor = this.slider.id;
+      this.output = element('span', 'sf-range-value', '1×');
+      rangeRow.append(label, this.output);
+      this.panel.append(rangeRow, this.slider);
+      const endpoints = element('div', 'sf-endpoints');
+      endpoints.setAttribute('aria-hidden', 'true');
+      endpoints.append(element('span', '', '0.25×'), element('span', '', '10×'));
+      this.reset = button('sf-option sf-reset', 'Reset playback speed to normal (\\)', 'Reset to normal');
+      this.hint = element('p', 'sf-hint', '[ slower · ] faster · \\ reset');
+      this.note = element('p', 'sf-note');
+      this.panel.append(endpoints, this.reset, this.hint, this.note);
+      this.status = element('span', 'sf-sr-only');
+      this.status.setAttribute('role', 'status');
+      this.status.setAttribute('aria-live', 'polite');
+      this.status.setAttribute('aria-atomic', 'true');
+      player.append(this.panel, this.status);
 
-  /* ══════════════════════════════════════════════════════════
-     PING HANDLER — validates sender is our own extension
-  ══════════════════════════════════════════════════════════ */
-  try {
-    chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-      // Only respond to messages from this extension's own popup
-      if (sender.id !== chrome.runtime.id) return false;
-      if (msg?.type === 'sf_ping') {
-        sendResponse({ alive: true, speed });
-        return false;   // synchronous — no async sendResponse needed
+      this.minus.addEventListener('click', () => {
+        if (this.minus.getAttribute('aria-disabled') !== 'true') changeSpeed(C.clamp(speed - C.STEP), this);
+      }, { signal: this.signal });
+      this.plus.addEventListener('click', () => {
+        if (this.plus.getAttribute('aria-disabled') !== 'true') changeSpeed(C.clamp(speed + C.STEP), this);
+      }, { signal: this.signal });
+      this.trigger.addEventListener('click', () => this.panel.hidden ? this.open() : this.close(true), { signal: this.signal });
+      this.trigger.addEventListener('keydown', event => {
+        if (event.key === 'ArrowDown') { event.preventDefault(); event.stopPropagation(); this.open(); }
+      }, { signal: this.signal });
+      this.closeButton.addEventListener('click', () => this.close(true), { signal: this.signal });
+      this.reset.addEventListener('click', () => changeSpeed(1, this), { signal: this.signal });
+      this.slider.addEventListener('input', () => changeSpeed(Number(this.slider.value), this), { signal: this.signal });
+      for (const node of [this.root, this.panel]) {
+        for (const name of ['click', 'dblclick', 'pointerdown', 'mousedown', 'touchstart']) {
+          node.addEventListener(name, event => { activeController = this; event.stopPropagation(); }, { signal: this.signal });
+        }
+        node.addEventListener('keydown', event => {
+          if (event.key === 'Escape' && !this.panel.hidden) { event.preventDefault(); this.close(true); }
+          // Preserve Tab navigation; prevent Enter/Space/range keys reaching the player.
+          const isolate = node === this.panel || ['Enter', ' ', 'Escape', 'ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key);
+          if (isolate && !['[', ']', '\\', 'Tab'].includes(event.key)) event.stopPropagation();
+        }, { signal: this.signal });
+        node.addEventListener('keyup', event => {
+          if (node === this.panel || ['Enter', ' ', 'Escape', 'ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) event.stopPropagation();
+        }, { signal: this.signal });
       }
-    });
-  } catch (_) {}
-
-  /* ══════════════════════════════════════════════════════════
-     INIT
-  ══════════════════════════════════════════════════════════ */
-  function init() {
-    injectCSS();
-    mountWidget();
+      this.panel.addEventListener('focusout', () => queueMicrotask(() => {
+        if (!this.panel.contains(document.activeElement) && document.activeElement !== this.trigger) this.close(false);
+      }), { signal: this.signal });
+      document.addEventListener('pointerdown', event => {
+        if (!this.panel.hidden && !this.panel.contains(event.target) && !this.root.contains(event.target)) this.close(false);
+      }, { capture: true, signal: this.signal });
+      player.addEventListener('focusin', () => { activeController = this; }, { signal: this.signal });
+      player.addEventListener('pointerenter', () => { activeController = this; }, { signal: this.signal });
+      player.addEventListener('click', event => {
+        if (event.target.closest?.('.ytp-settings-button')) this.close(false);
+      }, { signal: this.signal });
+      this.attributes = new MutationObserver(() => {
+        const ad = this.adPlaying();
+        if (this.wasAd && !ad) this.apply();
+        this.wasAd = ad;
+        this.update();
+      });
+      this.attributes.observe(player, { attributes: true, attributeFilter: ['class'] });
+      if (typeof ResizeObserver !== 'undefined') {
+        this.resize = new ResizeObserver(() => this.layout());
+        this.resize.observe(player);
+        this.resize.observe(controls);
+      }
+      document.addEventListener('fullscreenchange', () => this.layout(), { signal: this.signal });
+      this.bindVideo();
+      this.layout();
+      this.update();
+    }
+    adPlaying() { return this.player.classList.contains('ad-showing') || this.player.classList.contains('ad-interrupting'); }
+    bindVideo() {
+      const video = this.player.querySelector('video.html5-main-video') || this.player.querySelector('video');
+      if (video === this.video) return;
+      this.mediaAbort?.abort();
+      this.video = video;
+      this.expectedRate = null;
+      if (!video) { this.update(); return; }
+      if (!originalRates.has(video)) originalRates.set(video, C.validSpeed(video.playbackRate) ? video.playbackRate : 1);
+      this.originalRate = originalRates.get(video);
+      this.mediaSource = video.currentSrc || video.src;
+      this.mediaAbort = new AbortController();
+      const signal = this.mediaAbort.signal;
+      const reapply = () => { this.mediaSource = video.currentSrc || video.src; this.apply(); this.update(); };
+      for (const name of ['loadedmetadata', 'loadeddata', 'canplay', 'play']) video.addEventListener(name, reapply, { signal });
+      video.addEventListener('ratechange', () => {
+        if (this.adPlaying() || !prefs.sfEnabled || !this.video) return;
+        if (this.expectedRate !== null && Math.abs(video.playbackRate - this.expectedRate) < 0.001) {
+          this.expectedRate = null;
+          return;
+        }
+        this.expectedRate = null;
+        if (this.mediaSource !== (video.currentSrc || video.src)) return;
+        // Accept native speed changes rather than fighting YouTube's Settings menu.
+        if (C.validSpeed(video.playbackRate) && Math.abs(video.playbackRate - speed) > 0.001) {
+          this.originalRate = video.playbackRate;
+          originalRates.set(video, video.playbackRate);
+          changeSpeed(video.playbackRate, this);
+        }
+      }, { signal });
+      if (!this.apply()) {
+        speed = C.validSpeed(video.playbackRate) ? video.playbackRate : 1;
+        persistSpeed();
+        this.notify('The saved speed was unavailable for this video. Playback speed has been adjusted.', true);
+      }
+    }
+    apply() {
+      if (!this.video || this.adPlaying() || !prefs.sfEnabled) return true;
+      const video = this.video;
+      if (Math.abs(video.playbackRate - speed) < 0.001) return true;
+      try {
+        this.expectedRate = speed;
+        video.playbackRate = speed;
+        if (Math.abs(video.playbackRate - speed) > 0.001) { this.expectedRate = null; return false; }
+        return true;
+      } catch { this.expectedRate = null; return false; }
+    }
+    notify(message, visible) {
+      clearTimeout(this.noticeTimer);
+      this.status.textContent = message;
+      this.status.classList.toggle('sf-toast', visible);
+      if (visible) this.noticeTimer = setTimeout(() => this.status.classList.remove('sf-toast'), 4000);
+    }
+    update() {
+      const value = C.format(speed), ad = this.adPlaying(), unavailable = ad || !this.video;
+      this.readout.textContent = value;
+      this.trigger.setAttribute('aria-label', `Playback speed: ${value}. Open speed options.`);
+      this.trigger.title = `Playback speed ${value} · Click for options`;
+      this.minus.setAttribute('aria-disabled', String(unavailable || speed <= C.MIN));
+      this.plus.setAttribute('aria-disabled', String(unavailable || speed >= C.MAX));
+      this.slider.disabled = unavailable;
+      this.slider.value = String(speed);
+      this.slider.setAttribute('aria-valuetext', `${value} playback speed`);
+      this.output.textContent = value;
+      for (const node of this.presetButtons) {
+        node.setAttribute('aria-pressed', String(Number(node.dataset.speed) === speed));
+        node.disabled = unavailable;
+      }
+      this.reset.disabled = unavailable;
+      this.root.classList.toggle('sf-unavailable', unavailable);
+      this.hint.hidden = !prefs.sfShortcuts;
+      this.note.textContent = ad ? 'Paused during ads. Your speed resumes afterward.' :
+        'At high speeds, some browsers may mute audio.';
+      this.note.hidden = !ad && speed <= 4;
+      if (!this.panel.hidden) this.layout();
+    }
+    layout() {
+      const reference = this.target.querySelector('.ytp-settings-button') || this.target.querySelector('.ytp-button:not(.sf-control)');
+      const rect = this.player.getBoundingClientRect();
+      if (reference) {
+        const css = getComputedStyle(reference), height = reference.getBoundingClientRect().height;
+        this.root.style.setProperty('--sf-control-height', `${Math.max(32, Math.min(56, height || 40))}px`);
+        this.root.style.fontFamily = css.fontFamily;
+        this.root.style.color = css.color;
+        this.panel.style.fontFamily = css.fontFamily;
+      }
+      this.root.classList.toggle('sf-compact', rect.width < 640);
+      const left = this.controls.querySelector('.ytp-left-controls');
+      if (left && this.target !== this.controls) {
+        const nativeGroups = [...this.target.children].filter(node => node !== this.root && node.getBoundingClientRect().width > 0);
+        const gap = parseFloat(getComputedStyle(this.target).gap) || 0;
+        const controlGap = parseFloat(getComputedStyle(this.controls).gap) || 0;
+        const nativeWidth = nativeGroups.reduce((total, node) => total + node.getBoundingClientRect().width, 0);
+        const needed = nativeWidth + this.root.getBoundingClientRect().width + gap * nativeGroups.length;
+        const available = this.controls.clientWidth - left.getBoundingClientRect().width - controlGap;
+        // Keep all three speed controls in front, even when native buttons fill the row.
+        this.root.classList.toggle('sf-overflow', rect.width > 0 && rect.width < 700 && this.controls.clientWidth > 0 && needed > available);
+      }
+      if (this.panel.hidden) return;
+      const trigger = this.trigger.getBoundingClientRect();
+      const width = Math.min(280, Math.max(180, rect.width - 16));
+      this.panel.style.width = `${width}px`;
+      this.panel.style.right = `${Math.max(8, Math.min(rect.width - width - 8, rect.right - trigger.right))}px`;
+      const bottom = Math.max(48, rect.bottom - trigger.top + 8);
+      this.panel.style.bottom = `${bottom}px`;
+      this.panel.style.maxHeight = `${Math.max(100, rect.height - bottom - 8)}px`;
+    }
+    open() {
+      for (const controller of controllers.values()) if (controller !== this) controller.close(false);
+      activeController = this;
+      // Use the real native button instead of undocumented player methods.
+      this.controls.querySelector('.ytp-settings-button[aria-expanded="true"]')?.click();
+      this.panel.hidden = false;
+      this.trigger.setAttribute('aria-expanded', 'true');
+      this.player.classList.add('sf-options-open');
+      this.layout();
+      (this.presetButtons.find(node => node.getAttribute('aria-pressed') === 'true' && !node.disabled) || this.closeButton).focus({ preventScroll: true });
+    }
+    close(restoreFocus) {
+      this.panel.hidden = true;
+      this.trigger.setAttribute('aria-expanded', 'false');
+      this.player.classList.remove('sf-options-open');
+      if (restoreFocus && this.trigger.isConnected) this.trigger.focus({ preventScroll: true });
+    }
+    destroy(restoreRate = false) {
+      this.close(false);
+      this.abort.abort();
+      this.mediaAbort?.abort();
+      this.attributes.disconnect();
+      this.resize?.disconnect();
+      clearTimeout(this.noticeTimer);
+      if (restoreRate && this.video && !this.adPlaying()) {
+        try { this.video.playbackRate = this.originalRate; } catch { /* The media may reject a write. */ }
+      }
+      if (restoreRate && this.video) originalRates.delete(this.video);
+      this.root.remove(); this.panel.remove(); this.status.remove();
+      if (activeController === this) activeController = null;
+    }
   }
+  PlayerController.nextID = 1;
 
-  // document_idle fires after DOMContentLoaded + subresources start loading.
-  // YouTube's player renders asynchronously, so a brief wait is still needed —
-  // but 400ms is enough; 900ms was over-conservative.
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => setTimeout(init, 400), { once: true });
-  } else {
-    setTimeout(init, 400);
+  function reconcile() {
+    scheduled = 0;
+    if (!initialized) return;
+    const allowed = prefs.sfEnabled && supportedRoute();
+    for (const [player, controller] of controllers) {
+      const controls = player.querySelector('.ytp-chrome-controls');
+      const target = controls?.querySelector('.ytp-right-controls') || controls;
+      if (!allowed || !player.isConnected || controls !== controller.controls || target !== controller.target || controller.root.parentElement !== target || !controller.panel.isConnected) {
+        controller.destroy(!prefs.sfEnabled);
+        controllers.delete(player);
+      } else controller.bindVideo();
+    }
+    if (!allowed) return;
+    for (const player of document.querySelectorAll('.html5-video-player')) {
+      if (controllers.has(player)) continue;
+      const controls = player.querySelector('.ytp-chrome-controls');
+      const target = controls?.querySelector('.ytp-right-controls') || controls;
+      if (target && player.querySelector('video')) controllers.set(player, new PlayerController(player, controls, target));
+    }
   }
-
+  function schedule() { if (!scheduled) scheduled = requestAnimationFrame(reconcile); }
+  const relevant = '.html5-video-player, .ytp-chrome-controls, .ytp-right-controls, video, .sf-controls, .sf-panel';
+  const observer = new MutationObserver(records => {
+    if (!initialized || !prefs.sfEnabled) return;
+    if (records.some(record => [...record.addedNodes, ...record.removedNodes].some(node =>
+      node.nodeType === 1 && (node.matches(relevant) || node.querySelector(relevant))))) schedule();
+  });
+  observer.observe(document.documentElement, { childList: true, subtree: true });
+  window.addEventListener('pagehide', event => {
+    if (event.persisted) return; // The existing controllers survive a back/forward cache restore.
+    observer.disconnect();
+    lifetime.abort();
+    cancelAnimationFrame(scheduled);
+    if (saveTimer && prefs.sfRemember) {
+      extension.storage.local.set({ sfSpeed: speed }).catch(() => {});
+    }
+    clearTimeout(saveTimer);
+    for (const controller of controllers.values()) controller.destroy();
+    controllers.clear();
+  }, { signal: lifetime.signal });
+  for (const event of ['yt-navigate-finish', 'yt-page-data-updated', 'popstate', 'pageshow']) window.addEventListener(event, schedule, { signal: lifetime.signal });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) schedule(); }, { signal: lifetime.signal });
+  window.addEventListener('keydown', event => {
+    if (!prefs.sfEnabled || !prefs.sfShortcuts) return;
+    const action = C.shortcut(event);
+    if (!action) return;
+    const controller = activeController?.player.isConnected ? activeController : [...controllers.values()].find(item => item.player.getBoundingClientRect().width > 0);
+    if (!controller || controller.adPlaying()) return;
+    event.preventDefault(); event.stopPropagation();
+    changeSpeed(action === 'reset' ? 1 : C.clamp(speed + (action === 'increase' ? C.STEP : -C.STEP)), controller);
+  }, { signal: lifetime.signal });
+  extension.runtime.onMessage.addListener((message, sender, respond) => {
+    if (sender.id !== extension.runtime.id || !message || !['sf:state', 'sf:set-speed'].includes(message.type)) return false;
+    if (!initialized) { respond({ ok: false, loading: true, error: 'SpeedFlow is loading. Try again in a moment.' }); return false; }
+    if (message.type === 'sf:set-speed') {
+      const controller = activeController || controllers.values().next().value;
+      respond(controller ? changeSpeed(message.speed, controller) : { ok: false, error: 'Open a regular YouTube video first.' });
+    } else respond({ ok: true, speed, enabled: prefs.sfEnabled, mounted: controllers.size > 0, ad: [...controllers.values()].some(controller => controller.adPlaying()) });
+    return false;
+  });
+  extension.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !Object.keys(C.DEFAULTS).some(key => key in changes)) return;
+    const updated = { ...prefs };
+    for (const key of Object.keys(C.DEFAULTS)) if (key in changes) updated[key] = changes[key].newValue;
+    const previous = prefs;
+    prefs = C.preferences(updated);
+    if (!prefs.sfRemember) clearTimeout(saveTimer);
+    const nextSpeed = prefs.sfRemember && 'sfSpeed' in changes ? prefs.sfSpeed : speed;
+    if (!previous.sfRemember && prefs.sfRemember) persistSpeed();
+    reconcile();
+    if (prefs.sfEnabled && nextSpeed !== speed) {
+      const result = changeSpeed(nextSpeed, null, false);
+      if (!result.ok) persistSpeed();
+    } else if (!prefs.sfEnabled) speed = nextSpeed;
+    for (const controller of controllers.values()) { controller.apply(); controller.update(); }
+  });
+  extension.storage.local.get(Object.keys(C.DEFAULTS)).then(raw => {
+    prefs = C.preferences(raw);
+    speed = prefs.sfRemember ? prefs.sfSpeed : 1;
+  }).catch(() => { storageNotice = true; }).finally(() => {
+    initialized = true;
+    reconcile();
+    if (storageNotice) announce('Preferences could not be loaded. Speed controls still work in this tab.', true);
+  });
 })();
