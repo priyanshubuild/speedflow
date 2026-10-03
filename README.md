@@ -131,3 +131,45 @@ Clicking the SpeedFlow toolbar icon attempts to activate the script on the curre
 SpeedFlow targets `www.youtube.com`. Mobile Chrome, embedded videos on other websites, and the different YouTube Shorts interface are outside this installation guide. YouTube layout changes can also affect where the widget appears.
 
 If the problem persists, open `chrome://extensions`, look for an **Errors** button on the SpeedFlow card, and report the message through [GitHub Issues](https://github.com/priyanshubuild/speedflow/issues). Include your Chrome version and the steps that reproduce the problem.
+
+## Update SpeedFlow
+
+An unpacked installation does not automatically download updates from GitHub.
+
+1. Download and extract the newest ZIP from this repository.
+2. Replace the extension files inside the **same permanent folder** you originally loaded in Chrome.
+3. Open `chrome://extensions`.
+4. Click **Reload** (the circular-arrow button) on the SpeedFlow card.
+5. Refresh any open YouTube tabs.
+
+If you prefer to use a different folder, remove the old installation and repeat **Load unpacked** using the new folder.
+
+## Disable or remove SpeedFlow
+
+1. Open `chrome://extensions`.
+2. Find the **SpeedFlow** card.
+3. Turn off its switch to disable it, or click **Remove** and confirm to uninstall it.
+4. Refresh open YouTube tabs to clear the already-injected controls.
+
+After removal, you can delete the extracted folder. The saved speed is stored in YouTube's site data and can remain after uninstalling; clearing YouTube site data also clears other YouTube preferences and may sign you out.
+
+## Permissions and storage
+
+- **YouTube site access:** The manifest limits site access to `www.youtube.com`, where the player controls run.
+- **`tabs`:** The toolbar popup queries the active tab to find its target.
+- **`scripting`:** The toolbar popup can inject `content.js` as a fallback on YouTube.
+- **Local preference:** The selected speed is stored under `sf_speed` in YouTube's local storage.
+
+The extension source includes no analytics or external network requests. YouTube page scripts can access the same site storage; this preference is not private extension storage.
+
+## Project files
+
+| File | Purpose |
+| --- | --- |
+| `manifest.json` | Chrome extension name, version, permissions, and script configuration. |
+| `content.js` | YouTube player widget, playback speed handling, shortcuts, and saved preference. |
+| `popup.html` / `popup.js` | Minimal toolbar popup and fallback script activation. |
+| `popup.css` | Placeholder stylesheet; player styles are injected by `content.js`. |
+| `fonts/` | Placeholder folder; the widget uses browser and YouTube fonts. |
+
+There is no build step. Load the repository folder directly with **Load unpacked** after downloading or cloning it.
