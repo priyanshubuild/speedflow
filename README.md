@@ -114,3 +114,20 @@ Keep the YouTube page focused when using these shortcuts. They are ignored while
 ### Toolbar button
 
 Clicking the SpeedFlow toolbar icon attempts to activate the script on the current tab, then closes its tiny popup immediately. A large popup or separate settings window is not expected. Use the toolbar button while a YouTube tab is active; the main interface lives in the video player.
+
+## Troubleshooting
+
+| Problem | What to try |
+| --- | --- |
+| **“Manifest file is missing or unreadable”** when loading | Extract the ZIP fully. Choose the folder that directly contains `manifest.json`, rather than its parent or the ZIP. |
+| **Load unpacked** is missing | Turn on **Developer mode** at `chrome://extensions`. A managed work or school browser may restrict this feature. |
+| SpeedFlow is installed but the controls are missing | Make sure SpeedFlow is enabled, open a regular video on `www.youtube.com`, refresh the tab, and move your mouse over the player. |
+| The toolbar popup disappears immediately | This is expected. Look for the controls inside the YouTube player. |
+| Keyboard shortcuts do nothing | Click a non-editable area of the YouTube page and try again. Leave search and comment fields first. |
+| Changes are not taking effect | Click **Reload** on SpeedFlow's extension card, then refresh the YouTube tab. |
+| Chrome cannot find the extension files | Restore the extracted folder to its original location, or remove SpeedFlow and load it again from its new location. |
+| Speed changes conflict with another extension | Temporarily disable other YouTube speed controllers, reload SpeedFlow, and refresh YouTube. |
+
+SpeedFlow targets `www.youtube.com`. Mobile Chrome, embedded videos on other websites, and the different YouTube Shorts interface are outside this installation guide. YouTube layout changes can also affect where the widget appears.
+
+If the problem persists, open `chrome://extensions`, look for an **Errors** button on the SpeedFlow card, and report the message through [GitHub Issues](https://github.com/priyanshubuild/speedflow/issues). Include your Chrome version and the steps that reproduce the problem.
